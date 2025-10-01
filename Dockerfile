@@ -17,7 +17,30 @@ ENV RUFF_VERSION=0.8.4 \
     MARKDOWNLINT_VERSION=0.43.0 \
     NODE_VERSION=20 \
     GO_VERSION=1.22.0 \
-    RUST_VERSION=stable
+    RUST_VERSION=stable \
+    # Additional Python Tools \
+    VULTURE_VERSION=2.11 \
+    PYRIGHT_VERSION=1.1.380 \
+    PYFLAKES_VERSION=3.2.0 \
+    SAFETY_VERSION=3.2.7 \
+    # Infrastructure as Code Tools \
+    TFLINT_VERSION=0.52.0 \
+    TFSEC_VERSION=1.28.10 \
+    CFNLINT_VERSION=1.14.1 \
+    ANSIBLE_LINT_VERSION=24.9.2 \
+    KUBEVAL_VERSION=0.16.1 \
+    KUBESCORE_VERSION=1.18.0 \
+    # Web Technologies \
+    HTML5VALIDATOR_VERSION=0.4.2 \
+    ESLINT_PLUGIN_REACT_VERSION=7.37.2 \
+    ESLINT_PLUGIN_VUE_VERSION=9.28.0 \
+    ANGULAR_ESLINT_VERSION=18.4.1 \
+    SASS_VERSION=1.80.6 \
+    # Security Tools \
+    SEMGREP_VERSION=1.93.0 \
+    TRIVY_VERSION=0.56.2 \
+    # Config File Tools \
+    TAPLO_VERSION=0.9.3
 
 # Language-specific tool selections (ON/OFF)
 ENV ENABLE_PYTHON=true \
@@ -29,7 +52,11 @@ ENV ENABLE_PYTHON=true \
     ENABLE_DOCKER=true \
     ENABLE_MARKDOWN=true \
     ENABLE_YAML=true \
-    ENABLE_JSON=true
+    ENABLE_JSON=true \
+    ENABLE_IAC=true \
+    ENABLE_WEB_EXTENDED=true \
+    ENABLE_SECURITY=true \
+    ENABLE_CONFIG_FILES=true
 
 # Default configurations
 ENV RUFF_CONFIG=/config/ruff.toml \
@@ -49,6 +76,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     xz-utils \
+    libxml2-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================================================
@@ -68,7 +96,11 @@ RUN if [ "$ENABLE_PYTHON" = "true" ]; then \
         isort==5.13.2 \
         autoflake==2.3.1 \
         pycodestyle==2.12.1 \
-        pydocstyle==6.3.0; \
+        pydocstyle==6.3.0 \
+        vulture==${VULTURE_VERSION} \
+        pyright==${PYRIGHT_VERSION} \
+        pyflakes==${PYFLAKES_VERSION} \
+        safety==${SAFETY_VERSION}; \
     fi
 
 # ============================================================================
@@ -161,6 +193,69 @@ RUN if [ "$ENABLE_JSON" = "true" ]; then \
     fi
 
 # ============================================================================
+# INFRASTRUCTURE AS CODE TOOLS
+# ============================================================================
+RUN if [ "$ENABLE_IAC" = "true" ]; then \
+    # TFLint \
+    wget -qO- "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_amd64.zip" | \
+    busybox unzip -d /tmp - && mv /tmp/tflint /usr/local/bin/ && \
+    # TFSec \
+    wget -qO /usr/local/bin/tfsec "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/tfsec-linux-amd64" && \
+    chmod +x /usr/local/bin/tfsec && \
+    # CFN-Lint \
+    pip install --no-cache-dir cfn-lint==${CFNLINT_VERSION} && \
+    # Ansible-Lint \
+    pip install --no-cache-dir ansible-lint==${ANSIBLE_LINT_VERSION} && \
+    # Kubeval \
+    wget -qO- "https://github.com/instrumenta/kubeval/releases/download/v${KUBEVAL_VERSION}/kubeval-linux-amd64.tar.gz" | \
+    tar -xzC /tmp && mv /tmp/kubeval /usr/local/bin/ && \
+    # Kube-Score \
+    wget -qO /usr/local/bin/kube-score "https://github.com/zegl/kube-score/releases/download/v${KUBESCORE_VERSION}/kube-score_${KUBESCORE_VERSION}_linux_amd64.tar.gz" && \
+    tar -xzf /usr/local/bin/kube-score -C /tmp && mv /tmp/kube-score /usr/local/bin/ && rm /usr/local/bin/kube-score; \
+    fi
+
+# Fix kube-score installation
+RUN if [ "$ENABLE_IAC" = "true" ]; then \
+    wget -qO- "https://github.com/zegl/kube-score/releases/download/v${KUBESCORE_VERSION}/kube-score_${KUBESCORE_VERSION}_linux_amd64.tar.gz" | \
+    tar -xzC /tmp && mv /tmp/kube-score /usr/local/bin/; \
+    fi
+
+# ============================================================================
+# EXTENDED WEB TECHNOLOGIES
+# ============================================================================
+RUN if [ "$ENABLE_WEB_EXTENDED" = "true" ]; then \
+    # HTML5 Validator \
+    pip install --no-cache-dir html5validator==${HTML5VALIDATOR_VERSION} && \
+    # React, Vue, Angular ESLint plugins \
+    npm install -g \
+        eslint-plugin-react@${ESLINT_PLUGIN_REACT_VERSION} \
+        eslint-plugin-vue@${ESLINT_PLUGIN_VUE_VERSION} \
+        @angular-eslint/eslint-plugin@${ANGULAR_ESLINT_VERSION} \
+        @angular-eslint/template-parser@${ANGULAR_ESLINT_VERSION} \
+        sass@${SASS_VERSION} \
+        stylelint-scss@6.8.1; \
+    fi
+
+# ============================================================================
+# SECURITY & VULNERABILITY SCANNING
+# ============================================================================
+RUN if [ "$ENABLE_SECURITY" = "true" ]; then \
+    # Semgrep \
+    pip install --no-cache-dir semgrep==${SEMGREP_VERSION} && \
+    # Trivy \
+    wget -qO- "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | \
+    tar -xzC /tmp && mv /tmp/trivy /usr/local/bin/; \
+    fi
+
+# ============================================================================
+# CONFIGURATION FILE TOOLS
+# ============================================================================
+RUN if [ "$ENABLE_CONFIG_FILES" = "true" ]; then \
+    # TOML linting with Taplo \
+    npm install -g @taplo/cli@${TAPLO_VERSION}; \
+    fi
+
+# ============================================================================
 # MCP SERVER & ORCHESTRATION SCRIPT
 # ============================================================================
 WORKDIR /app
@@ -189,17 +284,23 @@ TOOL_REGISTRY = {
         "bandit": {"cmd": "bandit -r", "fix": None, "config": "-c"},
         "pytest": {"cmd": "pytest", "fix": None, "config": "-c"},
         "isort": {"cmd": "isort --check", "fix": "isort", "config": "--settings-file"},
+        "vulture": {"cmd": "vulture", "fix": None, "config": None},
+        "pyright": {"cmd": "pyright", "fix": None, "config": None},
+        "pyflakes": {"cmd": "pyflakes", "fix": None, "config": None},
+        "safety": {"cmd": "safety check", "fix": None, "config": None},
     },
     "javascript": {
         "eslint": {"cmd": "eslint", "fix": "eslint --fix", "config": "-c"},
         "prettier": {"cmd": "prettier --check", "fix": "prettier --write", "config": "--config"},
         "jshint": {"cmd": "jshint", "fix": None, "config": "--config"},
         "jest": {"cmd": "jest", "fix": None, "config": "--config"},
+        "stylelint": {"cmd": "stylelint", "fix": "stylelint --fix", "config": "--config"},
     },
     "typescript": {
         "eslint": {"cmd": "eslint", "fix": "eslint --fix", "config": "-c"},
         "prettier": {"cmd": "prettier --check", "fix": "prettier --write", "config": "--config"},
         "tsc": {"cmd": "tsc --noEmit", "fix": None, "config": "-p"},
+        "stylelint": {"cmd": "stylelint", "fix": "stylelint --fix", "config": "--config"},
     },
     "go": {
         "golint": {"cmd": "golint", "fix": None, "config": None},
@@ -228,6 +329,30 @@ TOOL_REGISTRY = {
     },
     "json": {
         "jsonlint": {"cmd": "jsonlint -q", "fix": None, "config": None},
+    },
+    "iac": {
+        "tflint": {"cmd": "tflint", "fix": "tflint --fix", "config": "--config"},
+        "tfsec": {"cmd": "tfsec", "fix": None, "config": None},
+        "cfn-lint": {"cmd": "cfn-lint", "fix": None, "config": "--config-file"},
+        "ansible-lint": {"cmd": "ansible-lint", "fix": None, "config": "-c"},
+        "kubeval": {"cmd": "kubeval", "fix": None, "config": None},
+        "kube-score": {"cmd": "kube-score score", "fix": None, "config": None},
+    },
+    "web": {
+        "html5validator": {"cmd": "html5validator", "fix": None, "config": None},
+        "eslint-react": {"cmd": "eslint --ext .jsx,.tsx", "fix": "eslint --ext .jsx,.tsx --fix", "config": "-c"},
+        "eslint-vue": {"cmd": "eslint --ext .vue", "fix": "eslint --ext .vue --fix", "config": "-c"},
+        "eslint-angular": {"cmd": "eslint --ext .ts,.html", "fix": "eslint --ext .ts,.html --fix", "config": "-c"},
+        "sass": {"cmd": "sass --check", "fix": None, "config": None},
+        "stylelint-scss": {"cmd": "stylelint **/*.scss", "fix": "stylelint **/*.scss --fix", "config": "--config"},
+    },
+    "security": {
+        "semgrep": {"cmd": "semgrep --config=auto", "fix": None, "config": "--config"},
+        "trivy": {"cmd": "trivy fs", "fix": None, "config": None},
+    },
+    "config": {
+        "xmllint": {"cmd": "xmllint --noout", "fix": None, "config": None},
+        "taplo": {"cmd": "taplo check", "fix": "taplo format", "config": None},
     },
 }
 
