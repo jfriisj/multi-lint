@@ -13,10 +13,11 @@
         "run",
         "--rm",
         "-i",
+        "--name",
+        "mcp-docker-lint",
         "-v",
         "${workspaceFolder}:/workspace",
-        "ghcr.io/jfriisj/multi-lint-docker:latest",
-        "--stdin"
+        "ghcr.io/jfriisj/multi-lint-docker:latest"
       ]
     },
     "multi-lint-infrastructure": {
@@ -25,10 +26,11 @@
         "run",
         "--rm", 
         "-i",
+        "--name",
+        "mcp-infrastructure-lint",
         "-v",
         "${workspaceFolder}:/workspace",
-        "ghcr.io/jfriisj/multi-lint-infrastructure:latest",
-        "--stdin"
+        "ghcr.io/jfriisj/multi-lint-infrastructure:latest"
       ]
     },
     "multi-lint-javascript": {
@@ -36,11 +38,12 @@
       "args": [
         "run",
         "--rm",
-        "-i", 
+        "-i",
+        "--name",
+        "mcp-javascript-lint",
         "-v",
         "${workspaceFolder}:/workspace",
-        "ghcr.io/jfriisj/multi-lint-javascript:latest",
-        "--stdin"
+        "ghcr.io/jfriisj/multi-lint-javascript:latest"
       ]
     },
     "multi-lint-python": {
@@ -49,10 +52,11 @@
         "run",
         "--rm",
         "-i",
+        "--name",
+        "mcp-python-lint",
         "-v", 
         "${workspaceFolder}:/workspace",
-        "ghcr.io/jfriisj/multi-lint-python:latest",
-        "--stdin"
+        "ghcr.io/jfriisj/multi-lint-python:latest"
       ]
     },
     "multi-lint-security": {
@@ -61,10 +65,11 @@
         "run",
         "--rm",
         "-i",
+        "--name",
+        "mcp-security-scan",
         "-v",
         "${workspaceFolder}:/workspace", 
-        "ghcr.io/jfriisj/multi-lint-security:latest",
-        "--stdin"
+        "ghcr.io/jfriisj/multi-lint-security:latest"
       ]
     },
     "multi-lint-unity": {
@@ -73,10 +78,11 @@
         "run",
         "--rm",
         "-i",
+        "--name",
+        "mcp-unity-lint",
         "-v",
         "${workspaceFolder}:/workspace",
-        "ghcr.io/jfriisj/multi-lint-unity:latest",
-        "--stdin"
+        "ghcr.io/jfriisj/multi-lint-unity:latest"
       ]
     }
   }
