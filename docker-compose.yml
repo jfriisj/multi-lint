@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  multi-lint:
+    build: .
+    image: multi-lint:local
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/config
+    stdin_open: true
+    tty: true
+    environment:
+      - RUFF_CONFIG=/config/ruff.toml
+      - ESLINT_CONFIG=/config/.eslintrc.json
+
+  # Example: Auto-running Python linting on a mounted directory
+  python-lint:
+    image: multi-lint:local
+    volumes:
+      - ./workspace:/workspace
+    command: >
+      sh -c 'echo "{\"action\": \"run_suite\", \"language\": \"python\", \"path\": \"/workspace\"}" | 
+             python3 /app/mcp-tool-server.py --stdin'
+
+  # Example: Interactive shell with all tools available
+  shell:
+    image: multi-lint:local
+    volumes:
+      - ./workspace:/workspace
+    entrypoint: /bin/bash
+    stdin_open: true
+    tty: true
