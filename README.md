@@ -1,6 +1,31 @@
-# Multi-Language Testing & Linting Tool
+# Multi-Lint: Modular Code Quality Tools
 
-A Docker-based multi-language testing and linting tool optimized for MCP (Model Context Protocol) integration. Supports Python (with Ruff!), JavaScript, TypeScript, Go, Rust, Shell, Docker, Markdown, YAML, and JSON.
+A collection of **focused Docker images** for linting, testing, and code quality analysis across multiple programming languages and technologies. Each image is optimized for specific use cases and published as individual GitHub packages to avoid dependency conflicts.
+
+## 🎯 **Why Modular Images?**
+
+The original monolithic approach suffered from:
+- **Dependency conflicts** between tools (e.g., `ruamel.yaml` version conflicts)  
+- **Large image sizes** (~1-2GB) with unused tools
+- **Complex builds** taking excessive time
+- **Maintenance overhead** with interdependent tools
+
+The modular approach provides:
+- ✅ **No dependency conflicts** - each image is isolated
+- ✅ **Smaller images** - only download what you need (~100-400MB each)
+- ✅ **Faster builds** - parallel building and focused updates  
+- ✅ **Better maintenance** - independent versioning per tool category
+
+## 🏗️ **Available Images**
+
+| Image | Description | Tools Included | Size |
+|-------|-------------|----------------|------|
+| **[multi-lint-python](./images/python/)** | Python linting & testing | ruff, black, mypy, pylint, flake8, pytest, vulture, safety | ~200MB |
+| **[multi-lint-javascript](./images/javascript/)** | JavaScript/TypeScript tools | eslint, prettier, typescript, jest, stylelint, React/Vue/Angular | ~300MB |
+| **[multi-lint-infrastructure](./images/infrastructure/)** | Infrastructure as Code | tflint, tfsec, ansible-lint, kubeval, kube-score, cfn-lint | ~180MB |
+| **[multi-lint-security](./images/security/)** | Security scanning | semgrep, trivy, bandit, safety | ~300MB |
+| **[multi-lint-unity](./images/unity/)** | Unity C# development | dotnet-format, StyleCop, Unity analyzers, Roslyn tools | ~400MB |
+| **[multi-lint-docker](./images/docker/)** | Docker & container tools | hadolint, dive, trivy, container-structure-test, docker-bench | ~150MB |
 
 ## Features
 
@@ -16,57 +41,97 @@ A Docker-based multi-language testing and linting tool optimized for MCP (Model 
 ### Pull from GitHub Packages
 
 ```bash
-docker pull ghcr.io/jfriisj/multi-lint:latest
+# Python tools
+docker pull ghcr.io/jfriisj/multi-lint-python:latest
+
+# JavaScript/TypeScript tools  
+docker pull ghcr.io/jfriisj/multi-lint-javascript:latest
+
+# Unity C# development tools
+docker pull ghcr.io/jfriisj/multi-lint-unity:latest
+
+# Infrastructure as Code tools
+docker pull ghcr.io/jfriisj/multi-lint-infrastructure:latest
+
+# Security scanning tools
+docker pull ghcr.io/jfriisj/multi-lint-security:latest
 ```
 
-### Build Locally
+### Build Locally with Docker Compose
 
 ```bash
-docker build -t multi-lint .
+# Build all images
+docker compose build
+
+# Build specific image
+docker compose build python-lint
+
+# Build Unity development image
+docker compose build unity-lint
 ```
 
 ### Basic Usage
 
 ```bash
-# List all available tools
-docker run --rm multi-lint --stdin <<< '{"action": "list"}'
+# List all available Python tools
+docker compose run python-lint --stdin <<< '{"action": "list"}'
 
 # Run Ruff on Python code
-docker run --rm -v $(pwd):/workspace multi-lint --stdin <<< '{
+docker compose run python-lint --stdin <<< '{
   "action": "run",
-  "language": "python",
+  "language": "python", 
   "tool": "ruff",
   "path": "/workspace"
 }'
 
 # Run all Python tools
-docker run --rm -v $(pwd):/workspace multi-lint --stdin <<< '{
+docker compose run python-lint --stdin <<< '{
   "action": "run_suite",
   "language": "python",
   "path": "/workspace"
 }'
 
-# Auto-fix with Ruff
-docker run --rm -v $(pwd):/workspace multi-lint --stdin <<< '{
-  "action": "run",
-  "language": "python",
-  "tool": "ruff",
+# Unity development workflow
+docker compose run unity-lint --stdin <<< '{
+  "action": "unity_workflow",
   "path": "/workspace",
-  "fix": true
+  "config": "Debug"
+}'
+
+# JavaScript/TypeScript linting
+docker compose run javascript-lint --stdin <<< '{
+  "action": "run_suite",
+  "language": "javascript",
+  "path": "/workspace"
+}'
+
+# Docker tools - Dockerfile audit
+docker compose run docker-lint --stdin <<< '{
+  "action": "dockerfile_audit",
+  "path": "/workspace/Dockerfile"
+}'
+
+# Docker image analysis
+docker compose run docker-lint --stdin <<< '{
+  "action": "image_analysis",
+  "path": "myimage:latest"
 }'
 ```
 
 ### Using the CLI Wrapper
 
 ```bash
-# List tools
-docker run --rm multi-lint lint list
+# List Python tools
+docker compose run python-lint lint list
 
-# Run specific tool
-docker run --rm -v $(pwd):/workspace multi-lint lint run python ruff /workspace
+# Run specific Python tool
+docker compose run python-lint lint run python ruff /workspace
 
-# Run all tools for a language
-docker run --rm -v $(pwd):/workspace multi-lint lint suite python /workspace
+# Run all Python tools
+docker compose run python-lint lint suite python /workspace
+
+# Unity development workflow
+docker compose run unity-lint lint workflow /workspace Debug
 ```
 
 ## Supported Languages & Tools
@@ -119,6 +184,26 @@ docker run --rm -v $(pwd):/workspace multi-lint lint suite python /workspace
 ### JSON 🔧
 - jsonlint
 
+### Unity C# 🎮
+- **dotnet format** (code formatter)
+- **StyleCop.Analyzers** (style analysis)
+- **Microsoft.Unity.Analyzers** (Unity-specific rules)
+- **Roslynator** (advanced C# analysis)
+- **Security scan** (security analysis)
+- **EditorConfig** (consistent coding styles)
+- **Dependency analysis** (outdated packages)
+- **Unit testing** (NUnit/MSTest support)
+
+### Docker & Containers 🐳
+- **Hadolint** (Dockerfile linter & best practices)
+- **Dive** (Docker image layer analysis & optimization)
+- **Trivy** (vulnerability scanning for images, configs & secrets)
+- **container-structure-test** (Google's container testing framework)
+- **Docker Bench Security** (CIS Docker security benchmark)
+- **Multi-stage optimization** (build efficiency analysis)
+- **Layer analysis** (size & waste detection)
+- **Configuration auditing** (security misconfiguration detection)
+
 ## Configuration
 
 ### Customize Tool Versions
@@ -158,15 +243,27 @@ docker run --rm \
 
 ## MCP Integration
 
+### Configuration Files
+
+Each Docker image includes a complete MCP configuration file:
+
+- **Root Registry**: [`mcp.json`](./mcp.json) - Complete server registry
+- **Python Tools**: [`images/python/mcp.json`](./images/python/mcp.json) 
+- **JavaScript Tools**: [`images/javascript/mcp.json`](./images/javascript/mcp.json)
+- **Infrastructure Tools**: [`images/infrastructure/mcp.json`](./images/infrastructure/mcp.json)
+- **Security Tools**: [`images/security/mcp.json`](./images/security/mcp.json)
+- **Unity Tools**: [`images/unity/mcp.json`](./images/unity/mcp.json)
+- **Docker Tools**: [`images/docker/mcp.json`](./images/docker/mcp.json)
+
 ### JSON API
 
 The tool accepts JSON input via stdin:
 
 ```json
 {
-  "action": "run|run_suite|list",
-  "language": "python|javascript|go|rust|...",
-  "tool": "ruff|eslint|clippy|...",
+  "action": "run|run_suite|list|workflow_name",
+  "language": "python|javascript|dockerfile|...",
+  "tool": "ruff|eslint|hadolint|...",
   "path": "/workspace",
   "fix": false,
   "config": "/path/to/config"
@@ -183,6 +280,18 @@ The tool accepts JSON input via stdin:
   "stderr": "",
   "command": "ruff check /workspace"
 }
+```
+
+### Server Discovery
+
+Use the root `mcp.json` to discover all available servers:
+
+```bash
+# List all available MCP servers
+curl -s https://raw.githubusercontent.com/jfriisj/multi-lint/main/mcp.json | jq '.servers'
+
+# Get specific server configuration
+docker compose run python-lint cat /app/mcp.json | jq '.tools'
 ```
 
 ## Publishing to GitHub Packages

@@ -1,0 +1,174 @@
+{
+  "mcpVersion": "2024-11-05",
+  "name": "multi-lint-docker",
+  "version": "1.0.0",
+  "description": "Docker and container linting, security, and analysis tools",
+  "author": "jfriisj",
+  "license": "MIT",
+  "homepage": "https://github.com/jfriisj/multi-lint",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jfriisj/multi-lint.git"
+  },
+  "server": {
+    "command": "python3",
+    "args": ["/app/mcp-tool-server.py", "--stdin"],
+    "env": {
+      "MCP_SERVER_PORT": "3000"
+    }
+  },
+  "tools": {
+    "dockerfile": {
+      "hadolint": {
+        "description": "Dockerfile linter for best practices and errors",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Dockerfile"},
+            "config": {"type": "string", "description": "Path to .hadolint.yaml config file"}
+          },
+          "required": ["path"]
+        }
+      },
+      "best-practices": {
+        "description": "Docker best practices checker",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Dockerfile"},
+            "config": {"type": "string", "description": "Rules to ignore"}
+          },
+          "required": ["path"]
+        }
+      },
+      "syntax-check": {
+        "description": "Dockerfile syntax validation",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Dockerfile"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    "image": {
+      "dive": {
+        "description": "Docker image layer analysis and optimization",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Docker image name or tar file"},
+            "config": {"type": "string", "description": "Analysis configuration"}
+          },
+          "required": ["path"]
+        }
+      },
+      "trivy-image": {
+        "description": "Container image vulnerability scanner",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Docker image name"},
+            "config": {"type": "string", "description": "Output format (table, json, sarif)"}
+          },
+          "required": ["path"]
+        }
+      },
+      "structure-test": {
+        "description": "Container structure testing framework",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Docker image name"},
+            "config": {"type": "string", "description": "Path to test configuration file"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    "security": {
+      "trivy-config": {
+        "description": "Configuration security scanner",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to configuration files or directory"},
+            "config": {"type": "string", "description": "Output format"}
+          },
+          "required": ["path"]
+        }
+      },
+      "trivy-secrets": {
+        "description": "Secrets scanner for container filesystems",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to scan for secrets"},
+            "config": {"type": "string", "description": "Output format"}
+          },
+          "required": ["path"]
+        }
+      },
+      "docker-bench": {
+        "description": "CIS Docker Benchmark security scanner",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Docker environment to scan", "default": "."}
+          }
+        }
+      },
+      "cve-scan": {
+        "description": "CVE vulnerability scanner for images",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Docker image name"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    "analysis": {
+      "layer-analysis": {
+        "description": "Docker image layer efficiency analysis",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Docker image name or tar file"}
+          },
+          "required": ["path"]
+        }
+      },
+      "size-analysis": {
+        "description": "Docker image size waste analysis",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Docker image name or tar file"}
+          },
+          "required": ["path"]
+        }
+      }
+    }
+  },
+  "workflows": {
+    "dockerfile_audit": {
+      "description": "Complete Dockerfile security and quality audit",
+      "steps": ["hadolint", "best-practices", "trivy-config", "dockerfile-complexity"]
+    },
+    "image_analysis": {
+      "description": "Complete Docker image analysis",
+      "steps": ["dive", "trivy-image", "cve-scan", "layer-analysis"]
+    },
+    "security_audit": {
+      "description": "Comprehensive Docker security audit",
+      "steps": ["trivy-config", "trivy-secrets", "docker-bench", "cve-scan"]
+    },
+    "optimization_analysis": {
+      "description": "Docker image optimization analysis",
+      "steps": ["layer-analysis", "size-analysis", "dive"]
+    }
+  }
+}

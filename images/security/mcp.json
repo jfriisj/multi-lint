@@ -1,0 +1,106 @@
+{
+  "mcpVersion": "2024-11-05",
+  "name": "multi-lint-security",
+  "version": "1.0.0",
+  "description": "Security scanning and vulnerability detection tools",
+  "author": "jfriisj",
+  "license": "MIT",
+  "homepage": "https://github.com/jfriisj/multi-lint",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jfriisj/multi-lint.git"
+  },
+  "server": {
+    "command": "python3",
+    "args": ["/app/mcp-tool-server.py", "--stdin"],
+    "env": {
+      "MCP_SERVER_PORT": "3000"
+    }
+  },
+  "tools": {
+    "security": {
+      "semgrep": {
+        "description": "Static analysis security scanner for multiple languages",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to source code directory"},
+            "config": {"type": "string", "description": "Semgrep ruleset (auto, p/security-audit, etc.)"}
+          },
+          "required": ["path"]
+        }
+      },
+      "trivy": {
+        "description": "Vulnerability scanner for containers and filesystems",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to scan (directory, image, etc.)"},
+            "config": {"type": "string", "description": "Scan type (fs, image, config, etc.)"}
+          },
+          "required": ["path"]
+        }
+      },
+      "bandit": {
+        "description": "Python security linter",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Python source code directory"},
+            "config": {"type": "string", "description": "Bandit configuration options"}
+          },
+          "required": ["path"]
+        }
+      },
+      "safety": {
+        "description": "Python dependency vulnerability scanner",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to requirements file or Python project"},
+            "config": {"type": "string", "description": "Safety configuration options"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    "secrets": {
+      "gitleaks": {
+        "description": "Git secrets scanner",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Git repository or directory"},
+            "config": {"type": "string", "description": "Gitleaks configuration file path"}
+          },
+          "required": ["path"]
+        }
+      },
+      "trufflehog": {
+        "description": "Secrets scanner for Git repositories",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Git repository or directory"},
+            "config": {"type": "string", "description": "TruffleHog configuration options"}
+          },
+          "required": ["path"]
+        }
+      }
+    }
+  },
+  "workflows": {
+    "security_full_scan": {
+      "description": "Complete security vulnerability scan",
+      "steps": ["semgrep", "trivy", "bandit", "safety"]
+    },
+    "secrets_scan": {
+      "description": "Comprehensive secrets detection",
+      "steps": ["gitleaks", "trufflehog"]
+    },
+    "python_security_audit": {
+      "description": "Python-specific security audit",
+      "steps": ["bandit", "safety", "semgrep"]
+    }
+  }
+}

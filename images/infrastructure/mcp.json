@@ -1,0 +1,110 @@
+{
+  "mcpVersion": "2024-11-05",
+  "name": "multi-lint-infrastructure",
+  "version": "1.0.0",
+  "description": "Infrastructure as Code linting and security scanning tools",
+  "author": "jfriisj",
+  "license": "MIT",
+  "homepage": "https://github.com/jfriisj/multi-lint",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jfriisj/multi-lint.git"
+  },
+  "server": {
+    "command": "python3",
+    "args": ["/app/mcp-tool-server.py", "--stdin"],
+    "env": {
+      "MCP_SERVER_PORT": "3000"
+    }
+  },
+  "tools": {
+    "terraform": {
+      "tflint": {
+        "description": "Terraform linter for best practices and errors",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Terraform files or directory"},
+            "config": {"type": "string", "description": "Path to .tflint.hcl config file"}
+          },
+          "required": ["path"]
+        }
+      },
+      "tfsec": {
+        "description": "Terraform security scanner",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Terraform files or directory"},
+            "config": {"type": "string", "description": "Output format (json, sarif, etc.)"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    "kubernetes": {
+      "kubeval": {
+        "description": "Kubernetes YAML validator",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Kubernetes YAML files or directory"},
+            "config": {"type": "string", "description": "Kubernetes version to validate against"}
+          },
+          "required": ["path"]
+        }
+      },
+      "kube-score": {
+        "description": "Kubernetes security and best practices analyzer",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Kubernetes YAML files or directory"},
+            "config": {"type": "string", "description": "Output format"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    "ansible": {
+      "ansible-lint": {
+        "description": "Ansible playbook linter",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Ansible playbooks or directory"},
+            "config": {"type": "string", "description": "Path to .ansible-lint config file"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    "cloudformation": {
+      "cfn-lint": {
+        "description": "AWS CloudFormation template linter",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to CloudFormation templates or directory"},
+            "config": {"type": "string", "description": "AWS region for validation"}
+          },
+          "required": ["path"]
+        }
+      }
+    }
+  },
+  "workflows": {
+    "terraform_audit": {
+      "description": "Complete Terraform security and quality audit",
+      "steps": ["tflint", "tfsec"]
+    },
+    "kubernetes_audit": {
+      "description": "Complete Kubernetes security and quality audit",
+      "steps": ["kubeval", "kube-score"]
+    },
+    "infrastructure_full_audit": {
+      "description": "Complete Infrastructure as Code audit",
+      "steps": ["tflint", "tfsec", "kubeval", "kube-score", "ansible-lint", "cfn-lint"]
+    }
+  }
+}

@@ -1,32 +1,81 @@
-version: '3.8'
+# Multi-Lint: Modular Docker Compose
+# Each service is a focused linting tool for specific languages/categories
+# This resolves dependency conflicts and enables selective usage
 
 services:
-  multi-lint:
-    build: .
-    image: multi-lint:local
+  # Python linting tools
+  python-lint:
+    build: 
+      context: ./images/python
+    image: ghcr.io/jfriisj/multi-lint-python:latest
     volumes:
       - ./workspace:/workspace
       - ./config:/config
     stdin_open: true
     tty: true
-    environment:
-      - RUFF_CONFIG=/config/ruff.toml
-      - ESLINT_CONFIG=/config/.eslintrc.json
 
-  # Example: Auto-running Python linting on a mounted directory
-  python-lint:
-    image: multi-lint:local
+  # JavaScript/TypeScript linting tools  
+  javascript-lint:
+    build:
+      context: ./images/javascript
+    image: ghcr.io/jfriisj/multi-lint-javascript:latest
     volumes:
       - ./workspace:/workspace
-    command: >
-      sh -c 'echo "{\"action\": \"run_suite\", \"language\": \"python\", \"path\": \"/workspace\"}" | 
-             python3 /app/mcp-tool-server.py --stdin'
-
-  # Example: Interactive shell with all tools available
-  shell:
-    image: multi-lint:local
-    volumes:
-      - ./workspace:/workspace
-    entrypoint: /bin/bash
+      - ./config:/config
     stdin_open: true
     tty: true
+
+  # Infrastructure as Code tools
+  infrastructure-lint:
+    build:
+      context: ./images/infrastructure
+    image: ghcr.io/jfriisj/multi-lint-infrastructure:latest
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/config
+    stdin_open: true
+    tty: true
+
+  # Security scanning tools
+  security-lint:
+    build:
+      context: ./images/security
+    image: ghcr.io/jfriisj/multi-lint-security:latest
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/config
+    stdin_open: true
+    tty: true
+
+  # Unity C# development tools
+  unity-lint:
+    build:
+      context: ./images/unity
+    image: ghcr.io/jfriisj/multi-lint-unity:latest
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/config
+    stdin_open: true
+    tty: true
+
+  # Docker tools (Dockerfile linting, image analysis, security)
+  docker-lint:
+    build:
+      context: ./images/docker
+    image: ghcr.io/jfriisj/multi-lint-docker:latest
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # For image analysis
+    stdin_open: true
+    tty: true
+
+# Example usage commands:
+# Build all images:           docker compose build
+# Build specific image:       docker compose build python-lint
+# Run Python linting:         docker compose run python-lint --stdin <<< '{"action": "list"}'
+# Run JavaScript linting:     docker compose run javascript-lint --stdin <<< '{"action": "run_suite", "language": "javascript", "path": "/workspace"}'
+# Run Infrastructure tools:   docker compose run infrastructure-lint --stdin <<< '{"action": "run", "language": "terraform", "tool": "tflint", "path": "/workspace"}'
+# Run Security scanning:      docker compose run security-lint --stdin <<< '{"action": "run", "language": "security", "tool": "semgrep", "path": "/workspace"}'
+# Run Unity development:      docker compose run unity-lint --stdin <<< '{"action": "unity_workflow", "path": "/workspace", "config": "Debug"}'
+# Run Docker tools:           docker compose run docker-lint --stdin <<< '{"action": "dockerfile_audit", "path": "/workspace/Dockerfile"}'

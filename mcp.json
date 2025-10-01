@@ -1,0 +1,122 @@
+{
+  "mcpVersion": "2024-11-05",
+  "name": "multi-lint",
+  "version": "1.0.0",
+  "description": "Modular multi-language linting and code quality analysis tools",
+  "author": "jfriisj",
+  "license": "MIT",
+  "homepage": "https://github.com/jfriisj/multi-lint",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jfriisj/multi-lint.git"
+  },
+  "servers": {
+    "python": {
+      "name": "multi-lint-python",
+      "description": "Python linting and testing tools",
+      "image": "ghcr.io/jfriisj/multi-lint-python:latest",
+      "port": 3000,
+      "config": "./images/python/mcp.json",
+      "languages": ["python"],
+      "tools": ["ruff", "black", "mypy", "pylint", "flake8", "pytest", "bandit", "safety"],
+      "workflows": ["python_full_check"]
+    },
+    "javascript": {
+      "name": "multi-lint-javascript",
+      "description": "JavaScript/TypeScript linting and testing tools",
+      "image": "ghcr.io/jfriisj/multi-lint-javascript:latest",
+      "port": 3000,
+      "config": "./images/javascript/mcp.json",
+      "languages": ["javascript", "typescript", "web"],
+      "tools": ["eslint", "prettier", "typescript", "jest", "stylelint"],
+      "workflows": ["web_full_check", "react_check"]
+    },
+    "infrastructure": {
+      "name": "multi-lint-infrastructure",
+      "description": "Infrastructure as Code linting and security",
+      "image": "ghcr.io/jfriisj/multi-lint-infrastructure:latest",
+      "port": 3000,
+      "config": "./images/infrastructure/mcp.json",
+      "languages": ["terraform", "kubernetes", "ansible", "cloudformation"],
+      "tools": ["tflint", "tfsec", "kubeval", "kube-score", "ansible-lint", "cfn-lint"],
+      "workflows": ["terraform_audit", "kubernetes_audit", "infrastructure_full_audit"]
+    },
+    "security": {
+      "name": "multi-lint-security",
+      "description": "Security scanning and vulnerability detection",
+      "image": "ghcr.io/jfriisj/multi-lint-security:latest",
+      "port": 3000,
+      "config": "./images/security/mcp.json",
+      "languages": ["security", "secrets"],
+      "tools": ["semgrep", "trivy", "bandit", "safety", "gitleaks", "trufflehog"],
+      "workflows": ["security_full_scan", "secrets_scan", "python_security_audit"]
+    },
+    "unity": {
+      "name": "multi-lint-unity",
+      "description": "Unity C# development and code quality",
+      "image": "ghcr.io/jfriisj/multi-lint-unity:latest",
+      "port": 3000,
+      "config": "./images/unity/mcp.json",
+      "languages": ["csharp", "unity", "dotnet"],
+      "tools": ["dotnet-format", "roslynator", "security-scan", "unity-analyzers", "stylecop", "editorconfig"],
+      "workflows": ["unity_workflow", "csharp_quality_check", "unity_security_audit"]
+    },
+    "docker": {
+      "name": "multi-lint-docker",
+      "description": "Docker and container tools",
+      "image": "ghcr.io/jfriisj/multi-lint-docker:latest",
+      "port": 3000,
+      "config": "./images/docker/mcp.json",
+      "languages": ["dockerfile", "containers"],
+      "tools": ["hadolint", "dive", "trivy", "container-structure-test", "docker-bench"],
+      "workflows": ["dockerfile_audit", "image_analysis", "security_audit", "optimization_analysis"]
+    }
+  },
+  "usage": {
+    "docker_compose": {
+      "description": "Use Docker Compose for local development",
+      "examples": [
+        "docker compose run python-lint --stdin <<< '{\"action\": \"list\"}'",
+        "docker compose run javascript-lint --stdin <<< '{\"action\": \"run_suite\", \"language\": \"javascript\", \"path\": \"/workspace\"}'",
+        "docker compose run docker-lint --stdin <<< '{\"action\": \"dockerfile_audit\", \"path\": \"/workspace/Dockerfile\"}'"
+      ]
+    },
+    "github_packages": {
+      "description": "Pull individual images from GitHub Container Registry",
+      "examples": [
+        "docker pull ghcr.io/jfriisj/multi-lint-python:latest",
+        "docker pull ghcr.io/jfriisj/multi-lint-javascript:latest",
+        "docker pull ghcr.io/jfriisj/multi-lint-docker:latest"
+      ]
+    },
+    "mcp_api": {
+      "description": "JSON API for AI agent integration",
+      "actions": ["list", "run", "run_suite", "workflow-specific"],
+      "format": {
+        "input": {
+          "action": "run|run_suite|list|workflow_name",
+          "language": "language_category",
+          "tool": "specific_tool_name",
+          "path": "/path/to/analyze", 
+          "fix": false,
+          "config": "optional_config"
+        },
+        "output": {
+          "success": true,
+          "returncode": 0,
+          "stdout": "tool_output",
+          "stderr": "error_output",
+          "command": "executed_command"
+        }
+      }
+    }
+  },
+  "features": {
+    "modular": "Separate images eliminate dependency conflicts",
+    "comprehensive": "40+ tools across 6 categories",
+    "ai_ready": "MCP-compatible JSON API for AI agents",
+    "ci_cd_ready": "GitHub Actions workflow for automated builds",
+    "multi_platform": "Supports linux/amd64 and linux/arm64",
+    "optimized": "Individual images 150-400MB each"
+  }
+}

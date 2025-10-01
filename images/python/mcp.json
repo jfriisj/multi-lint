@@ -1,0 +1,97 @@
+{
+  "mcpVersion": "2024-11-05",
+  "name": "multi-lint-python",
+  "version": "1.0.0",
+  "description": "Python linting and testing tools for code quality analysis",
+  "author": "jfriisj",
+  "license": "MIT",
+  "homepage": "https://github.com/jfriisj/multi-lint",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jfriisj/multi-lint.git"
+  },
+  "server": {
+    "command": "python3",
+    "args": ["/app/mcp-tool-server.py", "--stdin"],
+    "env": {
+      "MCP_SERVER_PORT": "3000"
+    }
+  },
+  "tools": {
+    "python": {
+      "ruff": {
+        "description": "Ultra-fast Python linter and formatter",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Python files or directory"},
+            "fix": {"type": "boolean", "description": "Auto-fix issues", "default": false},
+            "config": {"type": "string", "description": "Path to ruff config file"}
+          },
+          "required": ["path"]
+        }
+      },
+      "black": {
+        "description": "Python code formatter",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Python files or directory"},
+            "fix": {"type": "boolean", "description": "Format code", "default": false}
+          },
+          "required": ["path"]
+        }
+      },
+      "mypy": {
+        "description": "Python static type checker",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Python files or directory"},
+            "config": {"type": "string", "description": "Path to mypy config file"}
+          },
+          "required": ["path"]
+        }
+      },
+      "pytest": {
+        "description": "Python testing framework",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to test directory"},
+            "config": {"type": "string", "description": "Additional pytest options"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    "security": {
+      "bandit": {
+        "description": "Python security linter",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to Python files or directory"}
+          },
+          "required": ["path"]
+        }
+      },
+      "safety": {
+        "description": "Python dependency vulnerability scanner",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to requirements file or directory"}
+          },
+          "required": ["path"]
+        }
+      }
+    }
+  },
+  "workflows": {
+    "python_full_check": {
+      "description": "Run complete Python code quality suite",
+      "steps": ["ruff", "black", "mypy", "bandit", "pytest"]
+    }
+  }
+}
