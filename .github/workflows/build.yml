@@ -36,6 +36,8 @@ jobs:
             context: ./images/unity
           - name: docker
             context: ./images/docker
+          - name: coverage
+            context: ./images/coverage
     
     permissions:
       contents: read
@@ -82,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        image: [python, javascript, infrastructure, security, unity, docker]
+        image: [python, javascript, infrastructure, security, unity, docker, coverage]
     
     steps:
       - name: Test ${{ matrix.image }} image
@@ -97,7 +99,7 @@ jobs:
     
     strategy:
       matrix:
-        image: [python, javascript, infrastructure, security, unity, docker]
+        image: [python, javascript, infrastructure, security, unity, docker, coverage]
     
     steps:
       - name: Log in to Container Registry
