@@ -28,23 +28,30 @@ RUN pip install --no-cache-dir \
     yamllint==1.35.1 \
     && pip cache purge
 
-# Install binary tools
-RUN cd /tmp && \
-    # TFLint
-    wget -qO- "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_amd64.zip" | unzip - && \
+# Install TFLint
+RUN wget -qO /tmp/tflint.zip "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_amd64.zip" && \
+    cd /tmp && unzip -q tflint.zip && \
     mv tflint /usr/local/bin/ && \
-    # TFSec
-    wget -qO /usr/local/bin/tfsec "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/tfsec-linux-amd64" && \
-    chmod +x /usr/local/bin/tfsec && \
-    # Kubeval
-    wget -qO- "https://github.com/instrumenta/kubeval/releases/download/v${KUBEVAL_VERSION}/kubeval-linux-amd64.tar.gz" | tar -xzC /tmp && \
+    chmod +x /usr/local/bin/tflint && \
+    rm -f /tmp/tflint.zip
+
+# Install TFSec
+RUN wget -qO /usr/local/bin/tfsec "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/tfsec-linux-amd64" && \
+    chmod +x /usr/local/bin/tfsec
+
+# Install Kubeval
+RUN wget -qO /tmp/kubeval.tar.gz "https://github.com/instrumenta/kubeval/releases/download/v${KUBEVAL_VERSION}/kubeval-linux-amd64.tar.gz" && \
+    cd /tmp && tar -xzf kubeval.tar.gz && \
     mv kubeval /usr/local/bin/ && \
-    # Kube-Score
-    wget -qO- "https://github.com/zegl/kube-score/releases/download/v${KUBESCORE_VERSION}/kube-score_${KUBESCORE_VERSION}_linux_amd64.tar.gz" | tar -xzC /tmp && \
+    chmod +x /usr/local/bin/kubeval && \
+    rm -f /tmp/kubeval.tar.gz
+
+# Install Kube-Score
+RUN wget -qO /tmp/kube-score.tar.gz "https://github.com/zegl/kube-score/releases/download/v${KUBESCORE_VERSION}/kube-score_${KUBESCORE_VERSION}_linux_amd64.tar.gz" && \
+    cd /tmp && tar -xzf kube-score.tar.gz && \
     mv kube-score /usr/local/bin/ && \
-    # Cleanup
-    rm -rf /tmp/* && \
-    chmod +x /usr/local/bin/*
+    chmod +x /usr/local/bin/kube-score && \
+    rm -f /tmp/kube-score.tar.gz
 
 # Create MCP server
 WORKDIR /app
