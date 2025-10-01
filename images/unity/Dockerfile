@@ -26,6 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
+# Install MCP SDK for Python
+RUN pip3 install --no-cache-dir --break-system-packages mcp==1.1.2
+
 # Install .NET tools globally
 RUN dotnet tool install -g dotnet-format --version ${DOTNET_FORMAT_VERSION} && \
     dotnet tool install -g dotnet-outdated-tool && \
@@ -50,189 +53,240 @@ ENV PATH="/root/.dotnet/tools:${PATH}"
 
 # Create MCP server
 WORKDIR /app
-COPY mcp.json /app/mcp.json
 COPY --chmod=755 <<'EOF' /app/mcp-tool-server.py
 #!/usr/bin/env python3
 """
-MCP-Compatible Unity Development Tool Server
+MCP Server for Unity Development Tools
 Provides unified interface for Unity C# development and code quality tools
 """
-import json
+import asyncio
 import subprocess
-import sys
 import os
-from typing import Dict, Optional
+import shlex
+from typing import Any
 
-TOOL_REGISTRY = {
-    "csharp": {
-        "dotnet-format": {"cmd": "dotnet format", "fix": "dotnet format", "config": "--verbosity"},
-        "roslynator": {"cmd": "roslynator analyze", "fix": "roslynator fix", "config": "--config"},
-        "dotnet-outdated": {"cmd": "dotnet outdated", "fix": None, "config": None},
-        "security-scan": {"cmd": "security-scan", "fix": None, "config": None},
-        "dotnet-sonarscanner": {"cmd": "dotnet sonarscanner begin", "fix": None, "config": None},
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
+
+# Tool configurations
+TOOLS_CONFIG = {
+    "dotnet-format": {
+        "cmd": "dotnet format",
+        "fix_cmd": "dotnet format",
+        "description": ".NET code formatter - format C# code according to style rules",
+        "needs_cwd": False
     },
-    "unity": {
-        "unity-analyzers": {"cmd": "dotnet build", "fix": None, "config": "--configuration"},
-        "stylecop": {"cmd": "dotnet build", "fix": None, "config": "--configuration"},
-        "editorconfig": {"cmd": "editorconfig-checker", "fix": None, "config": None},
-        "unity-test": {"cmd": "dotnet test", "fix": None, "config": "--configuration"},
-        "unity-build": {"cmd": "dotnet build", "fix": None, "config": "--configuration"},
+    "roslynator": {
+        "cmd": "roslynator analyze",
+        "fix_cmd": "roslynator fix",
+        "description": "Roslyn code analyzer - find and fix C# code issues",
+        "needs_cwd": False
     },
-    "project": {
-        "dotnet-depends": {"cmd": "dotnet depends", "fix": None, "config": None},
-        "package-audit": {"cmd": "dotnet list package --vulnerable", "fix": None, "config": None},
-        "restore": {"cmd": "dotnet restore", "fix": None, "config": None},
-        "clean": {"cmd": "dotnet clean", "fix": None, "config": None},
+    "dotnet-outdated": {
+        "cmd": "dotnet outdated",
+        "fix_cmd": None,
+        "description": "Check for outdated NuGet packages",
+        "needs_cwd": True
+    },
+    "security-scan": {
+        "cmd": "security-scan",
+        "fix_cmd": None,
+        "description": "Security vulnerability scanner for .NET projects",
+        "needs_cwd": True
+    },
+    "editorconfig": {
+        "cmd": "editorconfig-checker",
+        "fix_cmd": None,
+        "description": "EditorConfig validator - check code formatting compliance",
+        "needs_cwd": False
+    },
+    "unity-test": {
+        "cmd": "dotnet test",
+        "fix_cmd": None,
+        "description": "Unity test runner - execute unit tests",
+        "needs_cwd": True
+    },
+    "unity-build": {
+        "cmd": "dotnet build",
+        "fix_cmd": None,
+        "description": "Unity project builder - compile C# code",
+        "needs_cwd": True
+    },
+    "dotnet-depends": {
+        "cmd": "dotnet depends",
+        "fix_cmd": None,
+        "description": "Dependency analyzer - visualize project dependencies",
+        "needs_cwd": True
+    },
+    "package-audit": {
+        "cmd": "dotnet list package --vulnerable",
+        "fix_cmd": None,
+        "description": "Package vulnerability audit - check for known CVEs",
+        "needs_cwd": True
+    },
+    "restore": {
+        "cmd": "dotnet restore",
+        "fix_cmd": None,
+        "description": "Restore NuGet packages and dependencies",
+        "needs_cwd": True
+    },
+    "clean": {
+        "cmd": "dotnet clean",
+        "fix_cmd": None,
+        "description": "Clean build artifacts and output directories",
+        "needs_cwd": True
     }
 }
 
-def run_tool(language: str, tool: str, path: str, fix: bool = False, config: Optional[str] = None) -> Dict:
-    if language not in TOOL_REGISTRY or tool not in TOOL_REGISTRY[language]:
-        return {"success": False, "error": f"Tool '{tool}' not available for '{language}'"}
+server = Server("unity-dev-server")
+
+@server.list_tools()
+async def list_tools() -> list[Tool]:
+    """List all available Unity development tools"""
+    return [
+        Tool(
+            name=name,
+            description=config["description"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to project directory or file to check"
+                    },
+                    "fix": {
+                        "type": "boolean",
+                        "description": "Automatically fix issues if supported",
+                        "default": False
+                    },
+                    "configuration": {
+                        "type": "string",
+                        "description": "Build configuration (Debug/Release)",
+                        "default": "Debug"
+                    },
+                    "verbosity": {
+                        "type": "string",
+                        "description": "Verbosity level (quiet/minimal/normal/detailed/diagnostic)"
+                    }
+                },
+                "required": ["path"]
+            }
+        )
+        for name, config in TOOLS_CONFIG.items()
+    ]
+
+@server.call_tool()
+async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+    """Execute a Unity development tool"""
+    if name not in TOOLS_CONFIG:
+        return [TextContent(type="text", text=f"Error: Unknown tool '{name}'")]
     
-    tool_info = TOOL_REGISTRY[language][tool]
-    cmd = tool_info["fix"] if fix and tool_info["fix"] else tool_info["cmd"]
-    command = cmd.split()
+    config = TOOLS_CONFIG[name]
+    path = arguments.get("path", ".")
+    fix = arguments.get("fix", False)
+    configuration = arguments.get("configuration", "Debug")
+    verbosity = arguments.get("verbosity")
     
-    # Special handling for different tools
-    if tool == "dotnet-format":
-        if path != ".":
-            command.extend(["--include", path])
-        if config:
-            command.extend(["--verbosity", config])
-    elif tool == "editorconfig":
-        command.append(path)
-    elif tool in ["unity-build", "unity-test", "dotnet-sonarscanner"]:
-        # Change to project directory
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(path)
-        except:
-            pass
+    # Build command
+    if fix and config["fix_cmd"]:
+        cmd = config["fix_cmd"]
     else:
-        if config and tool_info["config"]:
-            command.extend([tool_info["config"], config])
-        if path != "." and not any(x in tool for x in ["dotnet", "unity"]):
-            command.append(path)
+        cmd = config["cmd"]
     
+    cmd_parts = shlex.split(cmd)
+    
+    # Add configuration for build/test tools
+    if name in ["unity-build", "unity-test"] and configuration:
+        cmd_parts.extend(["--configuration", configuration])
+    
+    # Add verbosity for format
+    if name == "dotnet-format" and verbosity:
+        cmd_parts.extend(["--verbosity", verbosity])
+    
+    # Add path for tools that don't need cwd
+    if not config["needs_cwd"]:
+        if name == "dotnet-format" and path != ".":
+            cmd_parts.extend(["--include", path])
+        elif name == "editorconfig":
+            cmd_parts.append(path)
+    
+    # Determine working directory
+    cwd = path if config["needs_cwd"] and os.path.isdir(path) else None
+    
+    # Execute tool
     try:
         result = subprocess.run(
-            command,
+            cmd_parts,
             capture_output=True,
             text=True,
-            timeout=600,  # Longer timeout for builds
-            cwd=path if tool in ["unity-build", "unity-test", "restore", "clean"] else None
+            timeout=600,  # 10 minutes for builds
+            cwd=cwd
         )
         
-        return {
-            "success": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "command": " ".join(command)
-        }
+        output = f"Command: {' '.join(cmd_parts)}\n"
+        if cwd:
+            output += f"Working Directory: {cwd}\n"
+        output += f"Exit Code: {result.returncode}\n\n"
+        
+        if result.stdout:
+            output += "Output:\n" + result.stdout + "\n"
+        if result.stderr:
+            output += "Errors:\n" + result.stderr + "\n"
+        
+        if result.returncode == 0:
+            output += "\n✓ Check completed successfully"
+        else:
+            output += f"\n✗ Check failed with exit code {result.returncode}"
+        
+        return [TextContent(type="text", text=output)]
+        
     except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Tool execution timed out"}
+        return [TextContent(type="text", text=f"Error: Tool '{name}' timed out after 600 seconds")]
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return [TextContent(type="text", text=f"Error executing '{name}': {str(e)}")]
 
-def run_language_suite(language: str, path: str, fix: bool = False) -> Dict:
-    if language not in TOOL_REGISTRY:
-        return {"success": False, "error": f"Language '{language}' not supported"}
-    
-    results = {}
-    for tool_name in TOOL_REGISTRY[language].keys():
-        results[tool_name] = run_tool(language, tool_name, path, fix)
-    return {"success": True, "results": results}
-
-def run_unity_workflow(path: str, config: str = "Debug") -> Dict:
-    """Run complete Unity development workflow"""
-    workflow_steps = [
-        ("project", "restore", "Restore packages"),
-        ("project", "clean", "Clean project"),
-        ("unity", "unity-build", "Build project"),
-        ("csharp", "dotnet-format", "Format code"),
-        ("unity", "editorconfig", "Check EditorConfig"),
-        ("unity", "unity-test", "Run tests"),
-        ("project", "package-audit", "Security audit"),
-    ]
-    
-    results = {}
-    for category, tool, description in workflow_steps:
-        print(f"Running: {description}...", file=sys.stderr)
-        results[f"{category}_{tool}"] = run_tool(category, tool, path, config=config)
-        if not results[f"{category}_{tool}"]["success"] and tool in ["restore", "unity-build"]:
-            # Stop on critical failures
-            break
-    
-    return {"success": True, "workflow_results": results}
-
-def mcp_handler(request: Dict) -> Dict:
-    action = request.get("action", "")
-    if action == "list":
-        return {"success": True, "tools": TOOL_REGISTRY}
-    elif action == "run":
-        return run_tool(
-            request.get("language", ""),
-            request.get("tool", ""),
-            request.get("path", "."),
-            request.get("fix", False),
-            request.get("config")
+async def main():
+    """Run the MCP server"""
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            server.create_initialization_options()
         )
-    elif action == "run_suite":
-        return run_language_suite(
-            request.get("language", ""),
-            request.get("path", "."),
-            request.get("fix", False)
-        )
-    elif action == "unity_workflow":
-        return run_unity_workflow(
-            request.get("path", "."),
-            request.get("config", "Debug")
-        )
-    else:
-        return {"success": False, "error": f"Unknown action: {action}"}
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--stdin":
-        try:
-            request = json.load(sys.stdin)
-            response = mcp_handler(request)
-            print(json.dumps(response, indent=2))
-        except json.JSONDecodeError as e:
-            print(json.dumps({"success": False, "error": f"Invalid JSON: {e}"}))
-    else:
-        print("Unity Development Multi-Lint Tool")
-        print("Usage: python3 mcp-tool-server.py --stdin")
-        print("\nSupported languages: csharp, unity, project")
-        print("Special action: unity_workflow - runs complete development workflow")
+    asyncio.run(main())
 EOF
 
 # Create CLI wrapper
 COPY --chmod=755 <<'EOF' /usr/local/bin/lint
 #!/bin/bash
-ACTION=${1:-list}
-LANGUAGE=${2:-unity}
-TOOL=${3:-}
-PATH_TO_CHECK=${4:-.}
+TOOLS="dotnet-format roslynator dotnet-outdated security-scan editorconfig unity-test unity-build dotnet-depends package-audit restore clean"
 
-if [ "$ACTION" = "list" ]; then
-    echo '{"action": "list"}' | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "suite" ]; then
-    echo "{\"action\": \"run_suite\", \"language\": \"$LANGUAGE\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "run" ]; then
-    echo "{\"action\": \"run\", \"language\": \"$LANGUAGE\", \"tool\": \"$TOOL\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "workflow" ]; then
-    echo "{\"action\": \"unity_workflow\", \"path\": \"$PATH_TO_CHECK\", \"config\": \"${TOOL:-Debug}\"}" | python3 /app/mcp-tool-server.py --stdin
-else
-    echo "Usage: lint [list|run|suite|workflow] [language] [tool] [path]"
-    echo "Languages: csharp, unity, project"
+if [ "$1" = "list" ] || [ -z "$1" ]; then
+    echo "Available Unity Development Tools:"
+    echo "$TOOLS" | tr ' ' '\n' | sed 's/^/  - /'
+    echo ""
+    echo "Tool Categories:"
+    echo "  C# Tools: dotnet-format, roslynator, dotnet-outdated, security-scan"
+    echo "  Unity: editorconfig, unity-test, unity-build"
+    echo "  Project: dotnet-depends, package-audit, restore, clean"
+    echo ""
+    echo "Usage: lint <tool> <path> [options]"
     echo "Examples:"
-    echo "  lint list"
-    echo "  lint run csharp dotnet-format /project"
-    echo "  lint suite unity /project"
-    echo "  lint workflow /project Debug"
+    echo "  lint dotnet-format ./src"
+    echo "  lint unity-build . --configuration Release"
+    echo "  lint unity-test ."
+    echo "  lint roslynator ./MyProject.csproj"
+    exit 0
 fi
+
+TOOL=$1
+PROJECT_PATH=${2:-.}
+shift 2
+
+exec $TOOL $PROJECT_PATH "$@"
 EOF
 
 # Create Unity-specific configuration templates
@@ -365,4 +419,4 @@ EOF
 WORKDIR /workspace
 EXPOSE ${MCP_SERVER_PORT}
 ENTRYPOINT ["python3", "/app/mcp-tool-server.py"]
-CMD ["--stdin"]
+CMD []

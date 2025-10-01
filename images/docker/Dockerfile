@@ -27,6 +27,9 @@ RUN apk add --no-cache \
     jq \
     ca-certificates
 
+# Install MCP SDK for Python
+RUN pip3 install --no-cache-dir --break-system-packages mcp==1.1.2
+
 # Install Hadolint (Dockerfile linter)
 RUN wget -qO /usr/local/bin/hadolint \
         "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64" && \
@@ -66,237 +69,248 @@ RUN wget -qO /tmp/docker-bench.tar.gz \
 
 # Create MCP server
 WORKDIR /app
-COPY mcp.json /app/mcp.json
 COPY --chmod=755 <<'EOF' /app/mcp-tool-server.py
 #!/usr/bin/env python3
 """
-MCP-Compatible Docker Tools Server
+MCP Server for Docker Tools
 Provides unified interface for Dockerfile linting, image analysis, and security scanning
 """
-import json
+import asyncio
 import subprocess
-import sys
 import os
-from typing import Dict, Optional
+import shlex
+from typing import Any
 
-TOOL_REGISTRY = {
-    "dockerfile": {
-        "hadolint": {"cmd": "hadolint", "fix": None, "config": "--config"},
-        "best-practices": {"cmd": "hadolint", "fix": None, "config": "--ignore"},
-        "syntax-check": {"cmd": "hadolint --format json", "fix": None, "config": None},
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
+
+# Tool configurations with detailed descriptions
+TOOLS_CONFIG = {
+    "hadolint": {
+        "cmd": "hadolint",
+        "description": "Dockerfile linter - enforce best practices and detect issues",
+        "requires_dockerfile": True,
+        "accepts_config": True
     },
-    "image": {
-        "dive": {"cmd": "dive --ci", "fix": None, "config": "--highestUserWastedPercent"},
-        "trivy-image": {"cmd": "trivy image", "fix": None, "config": "--format"},
-        "trivy-fs": {"cmd": "trivy fs", "fix": None, "config": "--format"},
-        "structure-test": {"cmd": "container-structure-test test", "fix": None, "config": "--config"},
+    "hadolint-json": {
+        "cmd": "hadolint --format json",
+        "description": "Dockerfile linter with JSON output for parsing",
+        "requires_dockerfile": True,
+        "accepts_config": True
     },
-    "security": {
-        "trivy-config": {"cmd": "trivy config", "fix": None, "config": "--format"},
-        "trivy-secrets": {"cmd": "trivy fs --scanners secret", "fix": None, "config": "--format"},
-        "docker-bench": {"cmd": "docker-bench-security", "fix": None, "config": None},
-        "cve-scan": {"cmd": "trivy image --format json", "fix": None, "config": None},
+    "dive": {
+        "cmd": "dive --ci",
+        "description": "Docker image layer analyzer - inspect image efficiency",
+        "requires_image": True,
+        "accepts_config": False
     },
-    "analysis": {
-        "layer-analysis": {"cmd": "dive --ci --lowestEfficiency", "fix": None, "config": None},
-        "size-analysis": {"cmd": "dive --ci --highestWastedBytes", "fix": None, "config": None},
-        "dockerfile-complexity": {"cmd": "hadolint --format json", "fix": None, "config": None},
-        "multi-stage-check": {"cmd": "hadolint --ignore DL3006", "fix": None, "config": None},
+    "trivy-image": {
+        "cmd": "trivy image",
+        "description": "Container image vulnerability scanner",
+        "requires_image": True,
+        "accepts_config": False
+    },
+    "trivy-fs": {
+        "cmd": "trivy fs",
+        "description": "Filesystem vulnerability scanner for Docker contexts",
+        "requires_dockerfile": False,
+        "accepts_config": False
+    },
+    "trivy-config": {
+        "cmd": "trivy config",
+        "description": "Configuration file scanner for IaC misconfigurations",
+        "requires_dockerfile": False,
+        "accepts_config": False
+    },
+    "trivy-secrets": {
+        "cmd": "trivy fs --scanners secret",
+        "description": "Secret scanner for Docker contexts and files",
+        "requires_dockerfile": False,
+        "accepts_config": False
+    },
+    "structure-test": {
+        "cmd": "container-structure-test test",
+        "description": "Google's container structure testing framework",
+        "requires_image": True,
+        "accepts_config": True
+    },
+    "docker-bench": {
+        "cmd": "docker-bench-security",
+        "description": "Docker security benchmark - CIS Docker Benchmark",
+        "requires_dockerfile": False,
+        "accepts_config": False
+    },
+    "layer-analysis": {
+        "cmd": "dive --ci --lowestEfficiency=0.99",
+        "description": "Analyze Docker image layer efficiency",
+        "requires_image": True,
+        "accepts_config": False
+    },
+    "size-analysis": {
+        "cmd": "dive --ci --highestWastedBytes=0",
+        "description": "Analyze Docker image wasted space",
+        "requires_image": True,
+        "accepts_config": False
     }
 }
 
-def run_tool(language: str, tool: str, path: str, fix: bool = False, config: Optional[str] = None) -> Dict:
-    if language not in TOOL_REGISTRY or tool not in TOOL_REGISTRY[language]:
-        return {"success": False, "error": f"Tool '{tool}' not available for '{language}'"}
+server = Server("docker-tools-server")
+
+@server.list_tools()
+async def list_tools() -> list[Tool]:
+    """List all available Docker tools"""
+    return [
+        Tool(
+            name=name,
+            description=config["description"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to Dockerfile, directory, or image name (depending on tool)"
+                    },
+                    "config": {
+                        "type": "string",
+                        "description": "Path to configuration file (if supported)"
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Output format for trivy (json, table, sarif)"
+                    }
+                },
+                "required": ["path"]
+            }
+        )
+        for name, config in TOOLS_CONFIG.items()
+    ]
+
+@server.call_tool()
+async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+    """Execute a Docker tool"""
+    if name not in TOOLS_CONFIG:
+        return [TextContent(type="text", text=f"Error: Unknown tool '{name}'")]
     
-    tool_info = TOOL_REGISTRY[language][tool]
-    cmd = tool_info["cmd"]
-    command = cmd.split()
+    config = TOOLS_CONFIG[name]
+    path = arguments.get("path", ".")
+    config_file = arguments.get("config")
+    output_format = arguments.get("format")
     
-    # Special handling for different tools
-    if tool == "hadolint":
+    # Build command
+    cmd = config["cmd"]
+    cmd_parts = shlex.split(cmd)
+    
+    # Handle Dockerfile tools
+    if config.get("requires_dockerfile"):
         if path.endswith("Dockerfile") or os.path.basename(path) == "Dockerfile":
-            command.append(path)
-        else:
-            # Find Dockerfile in directory
-            dockerfile_path = os.path.join(path, "Dockerfile")
-            if os.path.exists(dockerfile_path):
-                command.append(dockerfile_path)
-            else:
-                return {"success": False, "error": f"No Dockerfile found in {path}"}
-        
-        if config:
-            command.extend(["--config", config])
-            
-    elif tool == "dockerfile-lint":
-        if path.endswith("Dockerfile") or os.path.basename(path) == "Dockerfile":
-            command.extend(["-f", path])
+            dockerfile_path = path
         else:
             dockerfile_path = os.path.join(path, "Dockerfile")
-            if os.path.exists(dockerfile_path):
-                command.extend(["-f", dockerfile_path])
-            else:
-                return {"success": False, "error": f"No Dockerfile found in {path}"}
-                
-    elif tool.startswith("dive"):
-        # Dive needs Docker image name or tar file
-        if config:
-            command.extend([config.split("=")[0], config.split("=")[1]])
-        command.append(path)  # path should be image name or tar file
+            if not os.path.exists(dockerfile_path):
+                return [TextContent(type="text", text=f"Error: No Dockerfile found in {path}")]
         
-    elif tool.startswith("trivy"):
-        if tool == "trivy-image":
-            command.append(path)  # path should be image name
-        elif tool in ["trivy-fs", "trivy-config", "trivy-secrets"]:
-            command.append(path)  # path should be directory
+        if config_file and config.get("accepts_config"):
+            cmd_parts.extend(["--config", config_file])
         
-        if config:
-            command.extend(["--format", config])
+        cmd_parts.append(dockerfile_path)
+    
+    # Handle image tools (dive, trivy-image, structure-test)
+    elif config.get("requires_image"):
+        if name == "structure-test":
+            if config_file:
+                cmd_parts.extend(["--config", config_file])
+            cmd_parts.extend(["--image", path])
         else:
-            command.extend(["--format", "table"])
-            
-    elif tool == "structure-test":
-        if config:
-            command.extend(["--config", config])
-        command.extend(["--image", path])  # path should be image name
-        
-    elif tool == "docker-bench":
-        # Docker bench runs system-wide checks
+            cmd_parts.append(path)
+    
+    # Handle trivy filesystem/config tools
+    elif name.startswith("trivy"):
+        if output_format:
+            cmd_parts.extend(["--format", output_format])
+        cmd_parts.append(path)
+    
+    # docker-bench runs without arguments
+    elif name == "docker-bench":
         pass
-    else:
-        if path != "." and not any(x in tool for x in ["bench", "dive"]):
-            command.append(path)
     
+    # Default: append path
+    else:
+        cmd_parts.append(path)
+    
+    # Execute tool
     try:
         result = subprocess.run(
-            command,
+            cmd_parts,
             capture_output=True,
             text=True,
-            timeout=300,
-            cwd=path if os.path.isdir(path) and tool not in ["dive", "trivy-image", "structure-test"] else None
+            timeout=600  # Longer timeout for image analysis
         )
         
-        return {
-            "success": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "command": " ".join(command)
-        }
+        output = f"Command: {' '.join(cmd_parts)}\n"
+        output += f"Exit Code: {result.returncode}\n\n"
+        
+        if result.stdout:
+            output += "Output:\n" + result.stdout + "\n"
+        if result.stderr:
+            output += "Errors:\n" + result.stderr + "\n"
+        
+        if result.returncode == 0:
+            output += "\n✓ Check completed successfully"
+        else:
+            output += f"\n✗ Check failed with exit code {result.returncode}"
+        
+        return [TextContent(type="text", text=output)]
+        
     except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Tool execution timed out"}
+        return [TextContent(type="text", text=f"Error: Tool '{name}' timed out after 600 seconds")]
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return [TextContent(type="text", text=f"Error executing '{name}': {str(e)}")]
 
-def run_language_suite(language: str, path: str, fix: bool = False) -> Dict:
-    if language not in TOOL_REGISTRY:
-        return {"success": False, "error": f"Language '{language}' not supported"}
-    
-    results = {}
-    for tool_name in TOOL_REGISTRY[language].keys():
-        results[tool_name] = run_tool(language, tool_name, path, fix)
-    return {"success": True, "results": results}
-
-def run_dockerfile_audit(path: str) -> Dict:
-    """Run comprehensive Dockerfile audit"""
-    audit_steps = [
-        ("dockerfile", "hadolint", "Lint Dockerfile"),
-        ("dockerfile", "best-practices", "Best practices check"),
-        ("security", "trivy-config", "Configuration security scan"),
-        ("analysis", "dockerfile-complexity", "Complexity analysis"),
-    ]
-    
-    results = {}
-    for category, tool, description in audit_steps:
-        print(f"Running: {description}...", file=sys.stderr)
-        results[f"{category}_{tool}"] = run_tool(category, tool, path)
-    
-    return {"success": True, "audit_results": results}
-
-def run_image_analysis(image_name: str) -> Dict:
-    """Run comprehensive Docker image analysis"""
-    analysis_steps = [
-        ("image", "dive", "Layer efficiency analysis"),
-        ("image", "trivy-image", "Vulnerability scan"),
-        ("security", "cve-scan", "CVE analysis"),
-        ("analysis", "layer-analysis", "Layer optimization check"),
-    ]
-    
-    results = {}
-    for category, tool, description in analysis_steps:
-        print(f"Running: {description}...", file=sys.stderr)
-        results[f"{category}_{tool}"] = run_tool(category, tool, image_name)
-    
-    return {"success": True, "analysis_results": results}
-
-def mcp_handler(request: Dict) -> Dict:
-    action = request.get("action", "")
-    if action == "list":
-        return {"success": True, "tools": TOOL_REGISTRY}
-    elif action == "run":
-        return run_tool(
-            request.get("language", ""),
-            request.get("tool", ""),
-            request.get("path", "."),
-            request.get("fix", False),
-            request.get("config")
+async def main():
+    """Run the MCP server"""
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            server.create_initialization_options()
         )
-    elif action == "run_suite":
-        return run_language_suite(
-            request.get("language", ""),
-            request.get("path", "."),
-            request.get("fix", False)
-        )
-    elif action == "dockerfile_audit":
-        return run_dockerfile_audit(request.get("path", "."))
-    elif action == "image_analysis":
-        return run_image_analysis(request.get("path", ""))
-    else:
-        return {"success": False, "error": f"Unknown action: {action}"}
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--stdin":
-        try:
-            request = json.load(sys.stdin)
-            response = mcp_handler(request)
-            print(json.dumps(response, indent=2))
-        except json.JSONDecodeError as e:
-            print(json.dumps({"success": False, "error": f"Invalid JSON: {e}"}))
-    else:
-        print("Docker Tools Multi-Lint Server")
-        print("Usage: python3 mcp-tool-server.py --stdin")
-        print("\nSupported languages: dockerfile, image, security, analysis")
-        print("Special actions: dockerfile_audit, image_analysis")
+    asyncio.run(main())
 EOF
 
 # Create CLI wrapper
 COPY --chmod=755 <<'EOF' /usr/local/bin/lint
 #!/bin/bash
-ACTION=${1:-list}
-LANGUAGE=${2:-dockerfile}
-TOOL=${3:-}
-PATH_TO_CHECK=${4:-.}
+TOOLS="hadolint hadolint-json dive trivy-image trivy-fs trivy-config trivy-secrets structure-test docker-bench layer-analysis size-analysis"
 
-if [ "$ACTION" = "list" ]; then
-    echo '{"action": "list"}' | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "suite" ]; then
-    echo "{\"action\": \"run_suite\", \"language\": \"$LANGUAGE\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "run" ]; then
-    echo "{\"action\": \"run\", \"language\": \"$LANGUAGE\", \"tool\": \"$TOOL\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "audit" ]; then
-    echo "{\"action\": \"dockerfile_audit\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "analyze" ]; then
-    echo "{\"action\": \"image_analysis\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-else
-    echo "Usage: lint [list|run|suite|audit|analyze] [language] [tool] [path]"
-    echo "Languages: dockerfile, image, security, analysis"
+if [ "$1" = "list" ] || [ -z "$1" ]; then
+    echo "Available Docker Tools:"
+    echo "$TOOLS" | tr ' ' '\n' | sed 's/^/  - /'
+    echo ""
+    echo "Tool Categories:"
+    echo "  Dockerfile: hadolint, hadolint-json"
+    echo "  Image: dive, trivy-image, trivy-fs, structure-test"
+    echo "  Security: trivy-config, trivy-secrets, docker-bench"
+    echo "  Analysis: layer-analysis, size-analysis"
+    echo ""
+    echo "Usage: lint <tool> <path|image> [options]"
     echo "Examples:"
-    echo "  lint list"
-    echo "  lint run dockerfile hadolint /workspace/Dockerfile"
-    echo "  lint suite dockerfile /workspace"
-    echo "  lint audit /workspace"
-    echo "  lint analyze myimage:latest"
+    echo "  lint hadolint ./Dockerfile"
+    echo "  lint dive myimage:latest"
+    echo "  lint trivy-image nginx:latest"
+    echo "  lint trivy-secrets ./"
+    echo ""
+    echo "Note: Image tools require Docker socket: -v /var/run/docker.sock:/var/run/docker.sock"
+    exit 0
 fi
+
+TOOL=$1
+TARGET=${2:-.}
+shift 2
+
+exec $TOOL $TARGET "$@"
 EOF
 
 # Create Docker-specific configuration templates
@@ -428,4 +442,4 @@ EOF
 WORKDIR /workspace
 EXPOSE ${MCP_SERVER_PORT}
 ENTRYPOINT ["python3", "/app/mcp-tool-server.py"]
-CMD ["--stdin"]
+CMD []

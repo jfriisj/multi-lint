@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python-based security tools (avoiding ruamel.yaml conflicts)
 RUN pip install --no-cache-dir \
+    mcp==1.1.2 \
     semgrep==${SEMGREP_VERSION} \
     bandit[toml]==${BANDIT_VERSION} \
     safety==3.2.7 \
@@ -33,129 +34,188 @@ RUN cd /tmp && \
 
 # Create MCP server
 WORKDIR /app
-COPY mcp.json /app/mcp.json
 COPY --chmod=755 <<'EOF' /app/mcp-tool-server.py
 #!/usr/bin/env python3
 """
-MCP-Compatible Security Scanning Tool Server
-Provides unified interface for security and vulnerability scanning tools
+MCP Server for Security Scanning Tools
+Provides unified interface for security and vulnerability scanning
 """
-import json
+import asyncio
 import subprocess
-import sys
-from typing import Dict, Optional
+import shlex
+from typing import Any
 
-TOOL_REGISTRY = {
-    "security": {
-        "semgrep": {"cmd": "semgrep --config=auto", "fix": None, "config": "--config"},
-        "trivy": {"cmd": "trivy fs", "fix": None, "config": None},
-        "bandit": {"cmd": "bandit -r", "fix": None, "config": "-c"},
-        "safety": {"cmd": "safety check", "fix": None, "config": None},
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
+
+# Tool configurations
+TOOLS_CONFIG = {
+    "semgrep": {
+        "cmd": "semgrep --config=auto",
+        "fix_cmd": None,
+        "config_flag": "--config",
+        "description": "Static analysis for security - find bugs and vulnerabilities"
     },
-    "container": {
-        "trivy-image": {"cmd": "trivy image", "fix": None, "config": None},
-        "trivy-config": {"cmd": "trivy config", "fix": None, "config": None},
+    "trivy": {
+        "cmd": "trivy fs",
+        "fix_cmd": None,
+        "config_flag": None,
+        "description": "Vulnerability scanner for filesystems and repositories"
+    },
+    "bandit": {
+        "cmd": "bandit -r",
+        "fix_cmd": None,
+        "config_flag": "-c",
+        "description": "Python security linter - find common security issues"
+    },
+    "safety": {
+        "cmd": "safety check",
+        "fix_cmd": None,
+        "config_flag": None,
+        "description": "Python dependency security checker - check for known vulnerabilities"
+    },
+    "trivy-image": {
+        "cmd": "trivy image",
+        "fix_cmd": None,
+        "config_flag": None,
+        "description": "Container image vulnerability scanner (requires Docker socket)"
+    },
+    "trivy-config": {
+        "cmd": "trivy config",
+        "fix_cmd": None,
+        "config_flag": None,
+        "description": "Configuration file scanner for IaC misconfigurations"
     }
 }
 
-def run_tool(language: str, tool: str, path: str, fix: bool = False, config: Optional[str] = None) -> Dict:
-    if language not in TOOL_REGISTRY or tool not in TOOL_REGISTRY[language]:
-        return {"success": False, "error": f"Tool '{tool}' not available for '{language}'"}
+server = Server("security-scan-server")
+
+@server.list_tools()
+async def list_tools() -> list[Tool]:
+    """List all available security scanning tools"""
+    return [
+        Tool(
+            name=name,
+            description=config["description"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to scan (file/directory) or image name for trivy-image"
+                    },
+                    "config": {
+                        "type": "string",
+                        "description": "Path to configuration file (optional)"
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Output format (for trivy: json, table, sarif)"
+                    }
+                },
+                "required": ["path"]
+            }
+        )
+        for name, config in TOOLS_CONFIG.items()
+    ]
+
+@server.call_tool()
+async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+    """Execute a security scanning tool"""
+    if name not in TOOLS_CONFIG:
+        return [TextContent(type="text", text=f"Error: Unknown tool '{name}'")]
     
-    tool_info = TOOL_REGISTRY[language][tool]
-    cmd = tool_info["fix"] if fix and tool_info["fix"] else tool_info["cmd"]
-    command = cmd.split()
+    config = TOOLS_CONFIG[name]
+    path = arguments.get("path", ".")
+    config_file = arguments.get("config")
+    output_format = arguments.get("format")
     
-    if config and tool_info["config"]:
-        command.extend([tool_info["config"], config])
+    # Build command
+    cmd = config["cmd"]
+    cmd_parts = shlex.split(cmd)
     
-    # Special handling for image scanning (path is image name)
-    if tool == "trivy-image":
-        command.append(path)
-    else:
-        command.append(path)
+    # Add config file if provided and supported
+    if config_file and config["config_flag"]:
+        cmd_parts.extend([config["config_flag"], config_file])
     
+    # Add format flag for trivy tools
+    if output_format and name.startswith("trivy"):
+        cmd_parts.extend(["--format", output_format])
+    
+    # Add path/target
+    cmd_parts.append(path)
+    
+    # Execute tool with extended timeout for security scans
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=600)  # Longer timeout for security scans
-        return {
-            "success": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "command": " ".join(command)
-        }
+        result = subprocess.run(
+            cmd_parts,
+            capture_output=True,
+            text=True,
+            timeout=600  # 10 minutes for thorough scans
+        )
+        
+        output = f"Command: {' '.join(cmd_parts)}\n"
+        output += f"Exit Code: {result.returncode}\n\n"
+        
+        if result.stdout:
+            output += "Output:\n" + result.stdout + "\n"
+        if result.stderr:
+            output += "Errors:\n" + result.stderr + "\n"
+        
+        if result.returncode == 0:
+            output += "\n✓ Scan completed - no issues found"
+        else:
+            output += f"\n⚠ Scan completed with findings (exit code {result.returncode})"
+        
+        return [TextContent(type="text", text=output)]
+        
+    except subprocess.TimeoutExpired:
+        return [TextContent(type="text", text=f"Error: Tool '{name}' timed out after 600 seconds")]
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return [TextContent(type="text", text=f"Error executing '{name}': {str(e)}")]
 
-def run_language_suite(language: str, path: str, fix: bool = False) -> Dict:
-    if language not in TOOL_REGISTRY:
-        return {"success": False, "error": f"Language '{language}' not supported"}
-    
-    results = {}
-    for tool_name in TOOL_REGISTRY[language].keys():
-        results[tool_name] = run_tool(language, tool_name, path, fix)
-    return {"success": True, "results": results}
-
-def mcp_handler(request: Dict) -> Dict:
-    action = request.get("action", "")
-    if action == "list":
-        return {"success": True, "tools": TOOL_REGISTRY}
-    elif action == "run":
-        return run_tool(
-            request.get("language", ""),
-            request.get("tool", ""),
-            request.get("path", "."),
-            request.get("fix", False),
-            request.get("config")
+async def main():
+    """Run the MCP server"""
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            server.create_initialization_options()
         )
-    elif action == "run_suite":
-        return run_language_suite(
-            request.get("language", ""),
-            request.get("path", "."),
-            request.get("fix", False)
-        )
-    else:
-        return {"success": False, "error": f"Unknown action: {action}"}
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--stdin":
-        try:
-            request = json.load(sys.stdin)
-            response = mcp_handler(request)
-            print(json.dumps(response, indent=2))
-        except json.JSONDecodeError as e:
-            print(json.dumps({"success": False, "error": f"Invalid JSON: {e}"}))
-    else:
-        print("Security Multi-Lint Tool")
-        print("Usage: python3 mcp-tool-server.py --stdin")
+    asyncio.run(main())
 EOF
 
 # Create CLI wrapper
 COPY --chmod=755 <<'EOF' /usr/local/bin/lint
 #!/bin/bash
-ACTION=${1:-list}
-CATEGORY=${2:-security}
-TOOL=${3:-}
-TARGET=${4:-.}
+TOOLS="semgrep trivy bandit safety trivy-image trivy-config"
 
-if [ "$ACTION" = "list" ]; then
-    echo '{"action": "list"}' | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "suite" ]; then
-    echo "{\"action\": \"run_suite\", \"language\": \"$CATEGORY\", \"path\": \"$TARGET\"}" | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "run" ]; then
-    echo "{\"action\": \"run\", \"language\": \"$CATEGORY\", \"tool\": \"$TOOL\", \"path\": \"$TARGET\"}" | python3 /app/mcp-tool-server.py --stdin
-else
-    echo "Usage: lint [list|run|suite] [category] [tool] [target]"
-    echo "Categories: security, container"
+if [ "$1" = "list" ] || [ -z "$1" ]; then
+    echo "Available Security Tools:"
+    echo "$TOOLS" | tr ' ' '\n' | sed 's/^/  - /'
+    echo ""
+    echo "Usage: lint <tool> <path|image> [options]"
     echo "Examples:"
-    echo "  lint list"
-    echo "  lint run security semgrep /code"
-    echo "  lint run container trivy-image nginx:latest"
-    echo "  lint suite security /code"
+    echo "  lint semgrep ./src"
+    echo "  lint trivy ./"
+    echo "  lint bandit ./python-code"
+    echo "  lint trivy-image nginx:latest"
+    echo ""
+    echo "Note: trivy-image requires Docker socket mount: -v /var/run/docker.sock:/var/run/docker.sock"
+    exit 0
 fi
+
+TOOL=$1
+TARGET=${2:-.}
+shift 2
+
+exec $TOOL $TARGET "$@"
 EOF
 
 WORKDIR /workspace
 EXPOSE ${MCP_SERVER_PORT}
 ENTRYPOINT ["python3", "/app/mcp-tool-server.py"]
-CMD ["--stdin"]
+CMD []

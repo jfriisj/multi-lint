@@ -18,6 +18,7 @@ ENV MCP_SERVER_PORT=3000
 
 # Install Python tools (avoiding conflicting packages)
 RUN pip install --no-cache-dir \
+    mcp==1.1.2 \
     ruff==${RUFF_VERSION} \
     black==${BLACK_VERSION} \
     mypy==${MYPY_VERSION} \
@@ -38,127 +39,140 @@ RUN pip install --no-cache-dir \
 
 # Create MCP server
 WORKDIR /app
-COPY mcp.json /app/mcp.json
 COPY --chmod=755 <<'EOF' /app/mcp-tool-server.py
 #!/usr/bin/env python3
 """
-MCP-Compatible Python Linting & Testing Tool Server
-Provides unified interface for Python code quality tools
+MCP Server for Python Linting and Testing Tools
+Provides unified interface for Python code quality tools via Model Context Protocol
 """
-import json
+import asyncio
 import subprocess
-import sys
-from typing import Dict, Optional
+from typing import Any
 
-TOOL_REGISTRY = {
-    "python": {
-        "ruff": {"cmd": "ruff check", "fix": "ruff check --fix", "config": "--config"},
-        "black": {"cmd": "black --check", "fix": "black", "config": "--config"},
-        "mypy": {"cmd": "mypy", "fix": None, "config": "--config-file"},
-        "pylint": {"cmd": "pylint", "fix": None, "config": "--rcfile"},
-        "flake8": {"cmd": "flake8", "fix": None, "config": "--config"},
-        "bandit": {"cmd": "bandit -r", "fix": None, "config": "-c"},
-        "pytest": {"cmd": "pytest", "fix": None, "config": "-c"},
-        "isort": {"cmd": "isort --check", "fix": "isort", "config": "--settings-file"},
-        "vulture": {"cmd": "vulture", "fix": None, "config": None},
-        "pyflakes": {"cmd": "pyflakes", "fix": None, "config": None},
-        "safety": {"cmd": "safety check", "fix": None, "config": None},
-        "coverage": {"cmd": "coverage run -m pytest", "fix": None, "config": None},
-        "autoflake": {"cmd": "autoflake --check", "fix": "autoflake --in-place", "config": None},
-    }
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
+
+# Tool configurations
+TOOLS_CONFIG = {
+    "ruff": {"cmd": "ruff check", "fix_cmd": "ruff check --fix", "config_flag": "--config", "description": "Fast Python linter - checks code for errors and style issues"},
+    "black": {"cmd": "black --check", "fix_cmd": "black", "config_flag": "--config", "description": "Python code formatter - formats code to consistent style"},
+    "mypy": {"cmd": "mypy", "fix_cmd": None, "config_flag": "--config-file", "description": "Static type checker - validates Python type hints"},
+    "pylint": {"cmd": "pylint", "fix_cmd": None, "config_flag": "--rcfile", "description": "Code analyzer - checks for errors, style, and code smells"},
+    "flake8": {"cmd": "flake8", "fix_cmd": None, "config_flag": "--config", "description": "Style guide enforcer - checks PEP 8 compliance"},
+    "bandit": {"cmd": "bandit -r", "fix_cmd": None, "config_flag": "-c", "description": "Security linter - finds common security issues"},
+    "pytest": {"cmd": "pytest", "fix_cmd": None, "config_flag": "-c", "description": "Testing framework - runs Python tests"},
+    "isort": {"cmd": "isort --check", "fix_cmd": "isort", "config_flag": "--settings-file", "description": "Import sorter - organizes Python imports"},
+    "vulture": {"cmd": "vulture", "fix_cmd": None, "config_flag": None, "description": "Dead code finder - detects unused code"},
+    "pyflakes": {"cmd": "pyflakes", "fix_cmd": None, "config_flag": None, "description": "Error checker - finds syntax and logic errors"},
+    "safety": {"cmd": "safety check", "fix_cmd": None, "config_flag": None, "description": "Dependency scanner - checks for known security vulnerabilities"},
+    "coverage": {"cmd": "coverage run -m pytest", "fix_cmd": None, "config_flag": None, "description": "Code coverage - measures test coverage"},
+    "autoflake": {"cmd": "autoflake --check", "fix_cmd": "autoflake --in-place", "config_flag": None, "description": "Unused import remover - cleans up unnecessary imports"}
 }
 
-def run_tool(language: str, tool: str, path: str, fix: bool = False, config: Optional[str] = None) -> Dict:
-    if language != "python" or tool not in TOOL_REGISTRY["python"]:
-        return {"success": False, "error": f"Tool '{tool}' not available for '{language}'"}
+# Create MCP server
+server = Server("python-lint-server")
+
+@server.list_tools()
+async def list_tools() -> list[Tool]:
+    """List all available Python linting and testing tools."""
+    return [
+        Tool(
+            name=name,
+            description=config["description"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to Python file or directory"},
+                    "fix": {"type": "boolean", "description": "Auto-fix issues if supported", "default": False},
+                    "config": {"type": "string", "description": "Path to config file"}
+                },
+                "required": ["path"]
+            }
+        )
+        for name, config in TOOLS_CONFIG.items()
+    ]
+
+@server.call_tool()
+async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+    """Execute a Python linting or testing tool."""
+    if name not in TOOLS_CONFIG:
+        raise ValueError(f"Unknown tool: {name}")
     
-    tool_info = TOOL_REGISTRY["python"][tool]
-    cmd = tool_info["fix"] if fix and tool_info["fix"] else tool_info["cmd"]
-    command = cmd.split()
+    config = TOOLS_CONFIG[name]
+    path = arguments.get("path", ".")
+    fix = arguments.get("fix", False)
+    config_path = arguments.get("config")
     
-    if config and tool_info["config"]:
-        command.extend([tool_info["config"], config])
+    # Build command
+    if fix and config["fix_cmd"]:
+        cmd = config["fix_cmd"].split()
+    else:
+        cmd = config["cmd"].split()
     
-    command.append(path)
+    # Add config if provided
+    if config_path and config["config_flag"]:
+        cmd.extend([config["config_flag"], config_path])
+    
+    # Add path
+    cmd.append(path)
     
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
-        return {
-            "success": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "command": " ".join(command)
-        }
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        output = f"Tool: {name}\n"
+        output += f"Command: {' '.join(cmd)}\n"
+        output += f"Exit Code: {result.returncode}\n\n"
+        output += f"{'='*60}\nSTDOUT:\n{result.stdout}\n"
+        
+        if result.stderr:
+            output += f"\n{'='*60}\nSTDERR:\n{result.stderr}\n"
+        
+        output += f"\n{'✅' if result.returncode == 0 else '⚠️'} "
+        output += "Success" if result.returncode == 0 else f"Issues detected (exit code: {result.returncode})"
+        
+        return [TextContent(type="text", text=output)]
+        
+    except subprocess.TimeoutExpired:
+        return [TextContent(type="text", text=f"❌ Error: Tool '{name}' timed out")]
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return [TextContent(type="text", text=f"❌ Error: {str(e)}")]
 
-def run_language_suite(language: str, path: str, fix: bool = False) -> Dict:
-    if language != "python":
-        return {"success": False, "error": f"Language '{language}' not supported"}
-    
-    results = {}
-    for tool_name in TOOL_REGISTRY["python"].keys():
-        results[tool_name] = run_tool("python", tool_name, path, fix)
-    return {"success": True, "results": results}
-
-def mcp_handler(request: Dict) -> Dict:
-    action = request.get("action", "")
-    if action == "list":
-        return {"success": True, "tools": TOOL_REGISTRY}
-    elif action == "run":
-        return run_tool(
-            request.get("language", ""),
-            request.get("tool", ""),
-            request.get("path", "."),
-            request.get("fix", False),
-            request.get("config")
-        )
-    elif action == "run_suite":
-        return run_language_suite(
-            request.get("language", ""),
-            request.get("path", "."),
-            request.get("fix", False)
-        )
-    else:
-        return {"success": False, "error": f"Unknown action: {action}"}
+async def main():
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--stdin":
-        try:
-            request = json.load(sys.stdin)
-            response = mcp_handler(request)
-            print(json.dumps(response, indent=2))
-        except json.JSONDecodeError as e:
-            print(json.dumps({"success": False, "error": f"Invalid JSON: {e}"}))
-    else:
-        print("Python Multi-Lint Tool")
-        print("Usage: python mcp-tool-server.py --stdin")
+    asyncio.run(main())
 EOF
 
 # Create CLI wrapper
 COPY --chmod=755 <<'EOF' /usr/local/bin/lint
 #!/bin/bash
-ACTION=${1:-list}
-TOOL=${2:-}
-PATH_TO_CHECK=${3:-.}
+# Python Linting Tools CLI
+TOOLS="ruff black mypy pylint flake8 bandit pytest isort vulture pyflakes safety coverage autoflake"
 
-if [ "$ACTION" = "list" ]; then
-    echo '{"action": "list"}' | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "suite" ]; then
-    echo "{\"action\": \"run_suite\", \"language\": \"python\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "run" ]; then
-    echo "{\"action\": \"run\", \"language\": \"python\", \"tool\": \"$TOOL\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-else
-    echo "Usage: lint [list|run|suite] [tool] [path]"
-    echo "Examples:"
-    echo "  lint list"
-    echo "  lint run ruff /code"
-    echo "  lint suite /code"
+if [ "$1" = "list" ] || [ -z "$1" ]; then
+    echo "Python Linting Tools:"
+    echo "$TOOLS" | tr ' ' '\n' | sed 's/^/  - /'
+    echo ""
+    echo "Usage: lint <tool> <path> [--fix] [--config <path>]"
+    exit 0
 fi
+
+TOOL=$1
+PATH=${2:-.}
+shift 2
+
+if ! echo "$TOOLS" | grep -wq "$TOOL"; then
+    echo "❌ Unknown tool: $TOOL"
+    exit 1
+fi
+
+exec $TOOL $PATH "$@"
 EOF
 
 WORKDIR /workspace
 EXPOSE ${MCP_SERVER_PORT}
 ENTRYPOINT ["python3", "/app/mcp-tool-server.py"]
-CMD ["--stdin"]
+CMD []

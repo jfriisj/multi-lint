@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python-based IaC tools (avoiding conflicts by using compatible versions)
 RUN pip install --no-cache-dir \
+    mcp==1.1.2 \
     cfn-lint==${CFNLINT_VERSION} \
     ansible-lint==${ANSIBLE_LINT_VERSION} \
     yamllint==1.35.1 \
@@ -55,131 +56,306 @@ RUN wget -qO /tmp/kube-score.tar.gz "https://github.com/zegl/kube-score/releases
 
 # Create MCP server
 WORKDIR /app
-COPY mcp.json /app/mcp.json
 COPY --chmod=755 <<'EOF' /app/mcp-tool-server.py
 #!/usr/bin/env python3
 """
-MCP-Compatible Infrastructure as Code Linting Tool Server
+MCP Server for Infrastructure as Code Linting Tools
 Provides unified interface for Terraform, Kubernetes, Ansible, and CloudFormation tools
 """
-import json
+import asyncio
 import subprocess
-import sys
-from typing import Dict, Optional
+from typing import Any
 
-TOOL_REGISTRY = {
-    "terraform": {
-        "tflint": {"cmd": "tflint", "fix": "tflint --fix", "config": "--config"},
-        "tfsec": {"cmd": "tfsec", "fix": None, "config": None},
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
+
+
+# Tool registry with metadata
+TOOLS_CONFIG = {
+    "tflint": {
+        "description": "Terraform linter - validates Terraform configurations",
+        "cmd": "tflint",
+        "category": "terraform"
     },
-    "kubernetes": {
-        "kubeval": {"cmd": "kubeval", "fix": None, "config": None},
-        "kube-score": {"cmd": "kube-score score", "fix": None, "config": None},
+    "tfsec": {
+        "description": "Terraform security scanner - finds security issues in Terraform",
+        "cmd": "tfsec",
+        "category": "terraform"
     },
-    "ansible": {
-        "ansible-lint": {"cmd": "ansible-lint", "fix": None, "config": "-c"},
+    "kubeval": {
+        "description": "Kubernetes YAML validator - validates Kubernetes manifests",
+        "cmd": "kubeval",
+        "category": "kubernetes"
     },
-    "cloudformation": {
-        "cfn-lint": {"cmd": "cfn-lint", "fix": None, "config": "--config-file"},
+    "kube-score": {
+        "description": "Kubernetes best practices - analyzes K8s manifests for best practices",
+        "cmd": "kube-score score",
+        "category": "kubernetes"
     },
-    "yaml": {
-        "yamllint": {"cmd": "yamllint", "fix": None, "config": "-c"},
+    "ansible-lint": {
+        "description": "Ansible playbook linter - checks Ansible playbooks for issues",
+        "cmd": "ansible-lint",
+        "category": "ansible"
+    },
+    "cfn-lint": {
+        "description": "CloudFormation template linter - validates AWS CloudFormation templates",
+        "cmd": "cfn-lint",
+        "category": "cloudformation"
+    },
+    "yamllint": {
+        "description": "YAML linter - validates YAML file syntax and style",
+        "cmd": "yamllint",
+        "category": "yaml"
     }
 }
 
-def run_tool(language: str, tool: str, path: str, fix: bool = False, config: Optional[str] = None) -> Dict:
-    if language not in TOOL_REGISTRY or tool not in TOOL_REGISTRY[language]:
-        return {"success": False, "error": f"Tool '{tool}' not available for '{language}'"}
+# Create MCP server
+server = Server("infrastructure-lint-server")
+
+
+@server.list_tools()
+async def list_tools() -> list[Tool]:
+    """List all available infrastructure linting tools."""
+    return [
+        Tool(
+            name=name,
+            description=config["description"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file or directory to lint"
+                    },
+                    "fix": {
+                        "type": "boolean",
+                        "description": "Whether to automatically fix issues (if supported)",
+                        "default": False
+                    },
+                    "config": {
+                        "type": "string",
+                        "description": "Optional path to configuration file"
+                    }
+                },
+                "required": ["path"]
+            }
+        )
+        for name, config in TOOLS_CONFIG.items()
+    ]
+
+
+@server.call_tool()
+async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+    """Execute a linting tool with the provided arguments."""
+    if name not in TOOLS_CONFIG:
+        raise ValueError(f"Unknown tool: {name}")
     
-    tool_info = TOOL_REGISTRY[language][tool]
-    cmd = tool_info["fix"] if fix and tool_info["fix"] else tool_info["cmd"]
-    command = cmd.split()
+    tool_config = TOOLS_CONFIG[name]
+    path = arguments.get("path", ".")
+    fix = arguments.get("fix", False)
+    config_path = arguments.get("config")
     
-    if config and tool_info["config"]:
-        command.extend([tool_info["config"], config])
+    # Build command
+    cmd = tool_config["cmd"].split()
     
-    command.append(path)
+    # Add config if provided
+    if config_path:
+        if name == "tflint":
+            cmd.extend(["--config", config_path])
+        elif name == "ansible-lint":
+            cmd.extend(["-c", config_path])
+        elif name == "cfn-lint":
+            cmd.extend(["--config-file", config_path])
+        elif name == "yamllint":
+            cmd.extend(["-c", config_path])
+    
+    # Add fix flag if supported and requested
+    if fix and name == "tflint":
+        cmd.append("--fix")
+    
+    # Add path
+    cmd.append(path)
     
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
-        return {
-            "success": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "command": " ".join(command)
-        }
+        # Run the tool
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        # Format output
+        output = f"Tool: {name}\n"
+        output += f"Command: {' '.join(cmd)}\n"
+        output += f"Exit Code: {result.returncode}\n"
+        output += f"\n{'='*60}\n"
+        output += f"STDOUT:\n{result.stdout}\n"
+        
+        if result.stderr:
+            output += f"\n{'='*60}\n"
+            output += f"STDERR:\n{result.stderr}\n"
+        
+        if result.returncode == 0:
+            output += f"\n✅ Success: No issues found"
+        else:
+            output += f"\n⚠️  Issues detected (exit code: {result.returncode})"
+        
+        return [TextContent(type="text", text=output)]
+        
+    except subprocess.TimeoutExpired:
+        error_msg = f"❌ Error: Tool '{name}' timed out after 300 seconds"
+        return [TextContent(type="text", text=error_msg)]
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        error_msg = f"❌ Error executing '{name}': {str(e)}"
+        return [TextContent(type="text", text=error_msg)]
 
-def run_language_suite(language: str, path: str, fix: bool = False) -> Dict:
-    if language not in TOOL_REGISTRY:
-        return {"success": False, "error": f"Language '{language}' not supported"}
-    
-    results = {}
-    for tool_name in TOOL_REGISTRY[language].keys():
-        results[tool_name] = run_tool(language, tool_name, path, fix)
-    return {"success": True, "results": results}
 
-def mcp_handler(request: Dict) -> Dict:
-    action = request.get("action", "")
-    if action == "list":
-        return {"success": True, "tools": TOOL_REGISTRY}
-    elif action == "run":
-        return run_tool(
-            request.get("language", ""),
-            request.get("tool", ""),
-            request.get("path", "."),
-            request.get("fix", False),
-            request.get("config")
+async def main():
+    """Run the MCP server."""
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            server.create_initialization_options()
         )
-    elif action == "run_suite":
-        return run_language_suite(
-            request.get("language", ""),
-            request.get("path", "."),
-            request.get("fix", False)
-        )
-    else:
-        return {"success": False, "error": f"Unknown action: {action}"}
+
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--stdin":
-        try:
-            request = json.load(sys.stdin)
-            response = mcp_handler(request)
-            print(json.dumps(response, indent=2))
-        except json.JSONDecodeError as e:
-            print(json.dumps({"success": False, "error": f"Invalid JSON: {e}"}))
-    else:
-        print("Infrastructure as Code Multi-Lint Tool")
-        print("Usage: python3 mcp-tool-server.py --stdin")
+    asyncio.run(main())
 EOF
 
-# Create CLI wrapper
+# Create CLI wrapper for easy tool execution
 COPY --chmod=755 <<'EOF' /usr/local/bin/lint
-#!/bin/bash
-ACTION=${1:-list}
-LANGUAGE=${2:-terraform}
-TOOL=${3:-}
-PATH_TO_CHECK=${4:-.}
+#!/usr/bin/env python3
+"""
+CLI wrapper for Infrastructure Linting MCP Server
+Provides easy command-line access to linting tools
+"""
+import sys
+import subprocess
+import json
 
-if [ "$ACTION" = "list" ]; then
-    echo '{"action": "list"}' | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "suite" ]; then
-    echo "{\"action\": \"run_suite\", \"language\": \"$LANGUAGE\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-elif [ "$ACTION" = "run" ]; then
-    echo "{\"action\": \"run\", \"language\": \"$LANGUAGE\", \"tool\": \"$TOOL\", \"path\": \"$PATH_TO_CHECK\"}" | python3 /app/mcp-tool-server.py --stdin
-else
-    echo "Usage: lint [list|run|suite] [language] [tool] [path]"
-    echo "Languages: terraform, kubernetes, ansible, cloudformation, yaml"
-    echo "Examples:"
-    echo "  lint list"
-    echo "  lint run terraform tflint /iac"
-    echo "  lint suite kubernetes /k8s"
-fi
+# Available tools by category
+TOOLS = {
+    "terraform": ["tflint", "tfsec"],
+    "kubernetes": ["kubeval", "kube-score"],
+    "ansible": ["ansible-lint"],
+    "cloudformation": ["cfn-lint"],
+    "yaml": ["yamllint"]
+}
+
+def list_tools():
+    """List all available tools."""
+    print("Available Infrastructure Linting Tools:\n")
+    for category, tools in TOOLS.items():
+        print(f"  {category.upper()}:")
+        for tool in tools:
+            print(f"    - {tool}")
+    print("\nUsage:")
+    print("  lint <tool> <path> [--fix] [--config <config-path>]")
+    print("\nExamples:")
+    print("  lint tflint /workspace")
+    print("  lint tfsec /workspace --config .tfsec.yaml")
+    print("  lint kubeval /workspace/manifests")
+    print("  lint ansible-lint /workspace/playbooks")
+
+def run_tool(tool, path, fix=False, config=None):
+    """Run a specific tool."""
+    # Find all tools
+    all_tools = [t for tools in TOOLS.values() for t in tools]
+    
+    if tool not in all_tools:
+        print(f"❌ Error: Unknown tool '{tool}'")
+        print(f"Available tools: {', '.join(all_tools)}")
+        sys.exit(1)
+    
+    # Build command
+    cmd = [tool, path]
+    
+    if config:
+        if tool == "tflint":
+            cmd.insert(1, "--config")
+            cmd.insert(2, config)
+        elif tool == "ansible-lint":
+            cmd.insert(1, "-c")
+            cmd.insert(2, config)
+        elif tool == "cfn-lint":
+            cmd.insert(1, "--config-file")
+            cmd.insert(2, config)
+        elif tool == "yamllint":
+            cmd.insert(1, "-c")
+            cmd.insert(2, config)
+    
+    if fix and tool == "tflint":
+        cmd.insert(1, "--fix")
+    
+    print(f"🔧 Running: {' '.join(cmd)}\n")
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if result.stdout:
+            print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        
+        if result.returncode == 0:
+            print("\n✅ Success: No issues found")
+        else:
+            print(f"\n⚠️  Issues detected (exit code: {result.returncode})")
+        
+        sys.exit(result.returncode)
+        
+    except subprocess.TimeoutExpired:
+        print(f"❌ Error: Tool '{tool}' timed out after 300 seconds")
+        sys.exit(1)
+    except FileNotFoundError:
+        print(f"❌ Error: Tool '{tool}' not found. Is it installed?")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        sys.exit(1)
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ["-h", "--help", "help"]:
+        list_tools()
+        sys.exit(0)
+    
+    if sys.argv[1] == "list":
+        list_tools()
+        sys.exit(0)
+    
+    # Parse arguments
+    tool = sys.argv[1]
+    
+    if len(sys.argv) < 3:
+        print(f"❌ Error: Path required")
+        print(f"Usage: lint {tool} <path> [--fix] [--config <config-path>]")
+        sys.exit(1)
+    
+    path = sys.argv[2]
+    fix = "--fix" in sys.argv
+    
+    config = None
+    if "--config" in sys.argv:
+        try:
+            config_idx = sys.argv.index("--config")
+            config = sys.argv[config_idx + 1]
+        except (IndexError, ValueError):
+            print("❌ Error: --config requires a path argument")
+            sys.exit(1)
+    
+    run_tool(tool, path, fix, config)
+
+if __name__ == "__main__":
+    main()
 EOF
 
 WORKDIR /workspace
 EXPOSE ${MCP_SERVER_PORT}
+
+# Default to MCP server mode, but allow CLI usage
 ENTRYPOINT ["python3", "/app/mcp-tool-server.py"]
-CMD ["--stdin"]
+CMD []
