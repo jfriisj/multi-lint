@@ -8,9 +8,6 @@ services:
     build: 
       context: ./images/python
     image: ghcr.io/jfriisj/multi-lint-python:latest
-    volumes:
-      - ./workspace:/workspace
-      - ./config:/config
     stdin_open: true
     tty: true
 
@@ -19,9 +16,6 @@ services:
     build:
       context: ./images/javascript
     image: ghcr.io/jfriisj/multi-lint-javascript:latest
-    volumes:
-      - ./workspace:/workspace
-      - ./config:/config
     stdin_open: true
     tty: true
 
@@ -30,9 +24,6 @@ services:
     build:
       context: ./images/infrastructure
     image: ghcr.io/jfriisj/multi-lint-infrastructure:latest
-    volumes:
-      - ./workspace:/workspace
-      - ./config:/config
     stdin_open: true
     tty: true
 
@@ -41,9 +32,6 @@ services:
     build:
       context: ./images/security
     image: ghcr.io/jfriisj/multi-lint-security:latest
-    volumes:
-      - ./workspace:/workspace
-      - ./config:/config
     stdin_open: true
     tty: true
 
@@ -52,9 +40,6 @@ services:
     build:
       context: ./images/unity
     image: ghcr.io/jfriisj/multi-lint-unity:latest
-    volumes:
-      - ./workspace:/workspace
-      - ./config:/config
     stdin_open: true
     tty: true
 
@@ -63,10 +48,14 @@ services:
     build:
       context: ./images/docker
     image: ghcr.io/jfriisj/multi-lint-docker:latest
-    volumes:
-      - ./workspace:/workspace
-      - ./config:/config
-      - /var/run/docker.sock:/var/run/docker.sock:ro  # For image analysis
+    stdin_open: true
+    tty: true
+
+  # Code Coverage tools (multi-language coverage analysis)
+  coverage-lint:
+    build:
+      context: ./images/coverage
+    image: ghcr.io/jfriisj/multi-lint-coverage:latest
     stdin_open: true
     tty: true
 
@@ -79,3 +68,4 @@ services:
 # Run Security scanning:      docker compose run security-lint --stdin <<< '{"action": "run", "language": "security", "tool": "semgrep", "path": "/workspace"}'
 # Run Unity development:      docker compose run unity-lint --stdin <<< '{"action": "unity_workflow", "path": "/workspace", "config": "Debug"}'
 # Run Docker tools:           docker compose run docker-lint --stdin <<< '{"action": "dockerfile_audit", "path": "/workspace/Dockerfile"}'
+# Run Coverage analysis:      docker compose run coverage-lint --stdin <<< '{"action": "run", "tool": "coverage", "path": "/workspace", "format": "html", "threshold": 80}'

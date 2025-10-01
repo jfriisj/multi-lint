@@ -84,6 +84,19 @@
         "${workspaceFolder}:/workspace",
         "ghcr.io/jfriisj/multi-lint-unity:latest"
       ]
+    },
+    "multi-lint-coverage": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--name",
+        "mcp-coverage-analysis",
+        "-v",
+        "${workspaceFolder}:/workspace",
+        "ghcr.io/jfriisj/multi-lint-coverage:latest"
+      ]
     }
   }
 }

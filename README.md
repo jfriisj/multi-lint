@@ -26,6 +26,7 @@ The modular approach provides:
 | **[multi-lint-security](./images/security/)** | Security scanning | semgrep, trivy, bandit, safety | ~300MB |
 | **[multi-lint-unity](./images/unity/)** | Unity C# development | dotnet-format, StyleCop, Unity analyzers, Roslyn tools | ~400MB |
 | **[multi-lint-docker](./images/docker/)** | Docker & container tools | hadolint, dive, trivy, container-structure-test, docker-bench | ~150MB |
+| **[multi-lint-coverage](./images/coverage/)** | Code coverage analysis | coverage.py, pytest-cov, nyc, jest, c8, gocov, cargo-tarpaulin | ~350MB |
 
 ## Features
 
@@ -55,6 +56,9 @@ docker pull ghcr.io/jfriisj/multi-lint-infrastructure:latest
 
 # Security scanning tools
 docker pull ghcr.io/jfriisj/multi-lint-security:latest
+
+# Code coverage tools
+docker pull ghcr.io/jfriisj/multi-lint-coverage:latest
 ```
 
 ### Build Locally with Docker Compose
@@ -68,6 +72,9 @@ docker compose build python-lint
 
 # Build Unity development image
 docker compose build unity-lint
+
+# Build coverage analysis image
+docker compose build coverage-lint
 ```
 
 ### Basic Usage
@@ -115,6 +122,30 @@ docker compose run docker-lint --stdin <<< '{
 docker compose run docker-lint --stdin <<< '{
   "action": "image_analysis",
   "path": "myimage:latest"
+}'
+
+# Python code coverage
+docker compose run coverage-lint --stdin <<< '{
+  "action": "run",
+  "tool": "coverage",
+  "path": "/workspace",
+  "format": "html",
+  "threshold": 80
+}'
+
+# JavaScript coverage with NYC
+docker compose run coverage-lint --stdin <<< '{
+  "action": "run",
+  "tool": "nyc",
+  "path": "/workspace",
+  "format": "json"
+}'
+
+# Multi-language coverage summary
+docker compose run coverage-lint --stdin <<< '{
+  "action": "run",
+  "tool": "coverage-summary",
+  "path": "/workspace"
 }'
 ```
 
@@ -203,6 +234,17 @@ docker compose run unity-lint lint workflow /workspace Debug
 - **Multi-stage optimization** (build efficiency analysis)
 - **Layer analysis** (size & waste detection)
 - **Configuration auditing** (security misconfiguration detection)
+
+### Code Coverage 📊
+- **coverage.py** (Python coverage with pytest integration)
+- **pytest-cov** (pytest coverage plugin)
+- **NYC/Istanbul** (JavaScript/TypeScript coverage)
+- **Jest Coverage** (built-in Jest coverage)
+- **C8** (native V8 coverage for Node.js)
+- **Go Test Coverage** (built-in Go coverage)
+- **Gocov** (detailed Go coverage analysis)
+- **Cargo Tarpaulin** (Rust code coverage)
+- **Multi-language summary** (coverage across all languages)
 
 ## Configuration
 
