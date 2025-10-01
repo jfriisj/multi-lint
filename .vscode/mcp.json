@@ -1,0 +1,83 @@
+{
+  "servers": {
+    "sequential-thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "multi-lint-docker": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v",
+        "${workspaceFolder}:/workspace",
+        "ghcr.io/jfriisj/multi-lint-docker:latest",
+        "--stdin"
+      ]
+    },
+    "multi-lint-infrastructure": {
+      "command": "docker", 
+      "args": [
+        "run",
+        "--rm", 
+        "-i",
+        "-v",
+        "${workspaceFolder}:/workspace",
+        "ghcr.io/jfriisj/multi-lint-infrastructure:latest",
+        "--stdin"
+      ]
+    },
+    "multi-lint-javascript": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i", 
+        "-v",
+        "${workspaceFolder}:/workspace",
+        "ghcr.io/jfriisj/multi-lint-javascript:latest",
+        "--stdin"
+      ]
+    },
+    "multi-lint-python": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v", 
+        "${workspaceFolder}:/workspace",
+        "ghcr.io/jfriisj/multi-lint-python:latest",
+        "--stdin"
+      ]
+    },
+    "multi-lint-security": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v",
+        "${workspaceFolder}:/workspace", 
+        "ghcr.io/jfriisj/multi-lint-security:latest",
+        "--stdin"
+      ]
+    },
+    "multi-lint-unity": {
+      "command": "docker", 
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v",
+        "${workspaceFolder}:/workspace",
+        "ghcr.io/jfriisj/multi-lint-unity:latest",
+        "--stdin"
+      ]
+    }
+  }
+}
